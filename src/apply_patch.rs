@@ -1,8 +1,8 @@
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::path::Path;
 
+use codex_apply_patch::{self as codex_patch, AppliedPatchFileChange};
+use codex_exec_server::LOCAL_FS;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
@@ -17,11 +17,13 @@ pub struct ApplyPatchOutput {
     pub output: String,
 }
 
-pub fn apply(input: ApplyPatchInput, default_workdir: &str) -> ApplyPatchOutput {
+pub async fn apply(input: ApplyPatchInput, default_workdir: &str) -> ApplyPatchOutput {
     match apply_inner(
         &input.patch,
         input.workdir.as_deref().unwrap_or(default_workdir),
-    ) {
+    )
+    .await
+    {
         Ok(out) => ApplyPatchOutput {
             status: "completed".into(),
             output: out,
@@ -33,136 +35,82 @@ pub fn apply(input: ApplyPatchInput, default_workdir: &str) -> ApplyPatchOutput 
     }
 }
 
-fn apply_inner(patch: &str, workdir: &str) -> Result<String, String> {
-    let mut lines: Vec<&str> = patch.lines().collect();
-    if patch.ends_with('\n') {
-        lines.push("");
+async fn apply_inner(patch: &str, workdir: &str) -> Result<String, String> {
+    let cwd = absolute_workdir(workdir)?;
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    match codex_patch::apply_patch(
+        patch,
+        &cwd,
+        &mut stdout,
+        &mut stderr,
+        LOCAL_FS.as_ref(),
+        None,
+    )
+    .await
+    {
+        Ok(delta) => {
+            let mut output = String::new();
+            output.push_str(&String::from_utf8_lossy(&stdout));
+            output.push_str(&String::from_utf8_lossy(&stderr));
+            if !delta.is_empty() {
+                output.push_str(&format_delta(&delta));
+            }
+            Ok(output)
+        }
+        Err(err) => {
+            let mut output = String::new();
+            output.push_str(&String::from_utf8_lossy(&stdout));
+            output.push_str(&String::from_utf8_lossy(&stderr));
+            if output.trim().is_empty() {
+                output = err.to_string();
+            }
+            Err(output)
+        }
     }
-    if lines.first() != Some(&"*** Begin Patch") || !lines.contains(&"*** End Patch") {
-        return Err("patch must start with *** Begin Patch and end with *** End Patch".into());
-    }
-    let root = Path::new(workdir);
-    let mut i = 1;
-    let mut changed = Vec::new();
-    while i < lines.len() {
-        let line = lines[i];
-        if line == "*** End Patch" {
-            return Ok(format!("Applied patch to {} file(s)", changed.len()));
-        }
-        if let Some(path) = line.strip_prefix("*** Add File: ") {
-            i += 1;
-            let mut content = String::new();
-            while i < lines.len() && !lines[i].starts_with("*** ") {
-                let Some(rest) = lines[i].strip_prefix('+') else {
-                    return Err(format!("Invalid add-file line {}: expected +", i + 1));
-                };
-                content.push_str(rest);
-                content.push('\n');
-                i += 1;
-            }
-            let path = safe_join(root, path);
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            }
-            fs::write(&path, content).map_err(|e| e.to_string())?;
-            changed.push(path);
-            continue;
-        }
-        if let Some(path) = line.strip_prefix("*** Delete File: ") {
-            let path = safe_join(root, path);
-            fs::remove_file(&path).map_err(|e| e.to_string())?;
-            changed.push(path);
-            i += 1;
-            continue;
-        }
-        if let Some(path) = line.strip_prefix("*** Update File: ") {
-            i += 1;
-            let mut move_to = None;
-            if i < lines.len()
-                && let Some(dest) = lines[i].strip_prefix("*** Move to: ")
-            {
-                move_to = Some(dest.to_string());
-                i += 1;
-            }
-            if i < lines.len() && lines[i].starts_with("@@") {
-                i += 1;
-            }
-            let path = safe_join(root, path);
-            let old =
-                fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
-            let mut out = String::new();
-            let old_lines: Vec<&str> = old.lines().collect();
-            let mut pos = 0usize;
-            while i < lines.len() && !lines[i].starts_with("*** ") {
-                let marker = lines[i]
-                    .chars()
-                    .next()
-                    .ok_or_else(|| format!("empty patch line {}", i + 1))?;
-                let body = &lines[i][1..];
-                match marker {
-                    ' ' => {
-                        while pos < old_lines.len() && old_lines[pos] != body {
-                            out.push_str(old_lines[pos]);
-                            out.push('\n');
-                            pos += 1;
-                        }
-                        if pos >= old_lines.len() {
-                            return Err(format!("missing context line: {body}"));
-                        }
-                        out.push_str(body);
-                        out.push('\n');
-                        pos += 1;
-                    }
-                    '-' => {
-                        while pos < old_lines.len() && old_lines[pos] != body {
-                            out.push_str(old_lines[pos]);
-                            out.push('\n');
-                            pos += 1;
-                        }
-                        if pos >= old_lines.len() {
-                            return Err(format!("missing removal line: {body}"));
-                        }
-                        pos += 1;
-                    }
-                    '+' => {
-                        out.push_str(body);
-                        out.push('\n');
-                    }
-                    _ => return Err(format!("invalid update line {}", i + 1)),
-                }
-                i += 1;
-            }
-            while pos < old_lines.len() {
-                out.push_str(old_lines[pos]);
-                out.push('\n');
-                pos += 1;
-            }
-            let target = move_to.map_or_else(|| path.clone(), |p| safe_join(root, &p));
-            if target != path {
-                fs::remove_file(&path).map_err(|e| e.to_string())?;
-            }
-            if let Some(parent) = target.parent() {
-                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-            }
-            fs::write(&target, out).map_err(|e| e.to_string())?;
-            changed.push(target);
-            continue;
-        }
-        return Err(format!("invalid patch header on line {}", i + 1));
-    }
-    Err("missing *** End Patch".into())
 }
 
-fn safe_join(root: &Path, path: &str) -> PathBuf {
-    root.join(path)
+fn absolute_workdir(workdir: &str) -> Result<AbsolutePathBuf, String> {
+    let path = Path::new(workdir);
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|e| format!("resolve current directory: {e}"))?
+            .join(path)
+    };
+    AbsolutePathBuf::from_absolute_path(&absolute)
+        .map_err(|e| format!("invalid absolute workdir {}: {e}", absolute.display()))
+}
+
+fn format_delta(delta: &codex_patch::AppliedPatchDelta) -> String {
+    let mut out = String::new();
+    for change in delta.changes() {
+        let kind = match &change.change {
+            AppliedPatchFileChange::Add { .. } => "added",
+            AppliedPatchFileChange::Delete { .. } => "deleted",
+            AppliedPatchFileChange::Update {
+                move_path: Some(_), ..
+            } => "moved",
+            AppliedPatchFileChange::Update { .. } => "updated",
+        };
+        out.push_str(&format!("{kind}: {}\n", change.path.display()));
+    }
+    if !delta.is_exact() {
+        out.push_str(
+            "warning: patch delta may be inexact due to filesystem errors or special files\n",
+        );
+    }
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
-    #[test]
-    fn applies_update() {
+    #[tokio::test]
+    async fn applies_update_with_codex_patcher() {
         let tmp = tempfile::tempdir().unwrap();
         fs::write(tmp.path().join("a.txt"), "hello\n").unwrap();
         let out = apply(
@@ -173,11 +121,33 @@ mod tests {
                 workdir: Some(tmp.path().display().to_string()),
             },
             "/tmp",
-        );
+        )
+        .await;
         assert_eq!(out.status, "completed");
         assert_eq!(
             fs::read_to_string(tmp.path().join("a.txt")).unwrap(),
             "world\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn codex_patcher_supports_multiple_chunks_and_move() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("a.txt"), "one\ntwo\nthree\n").unwrap();
+        let out = apply(
+            ApplyPatchInput {
+                patch: "*** Begin Patch\n*** Update File: a.txt\n*** Move to: b.txt\n@@\n-one\n+ONE\n@@\n-three\n+THREE\n*** End Patch\n"
+                    .into(),
+                workdir: Some(tmp.path().display().to_string()),
+            },
+            "/tmp",
+        )
+        .await;
+        assert_eq!(out.status, "completed", "{}", out.output);
+        assert!(!tmp.path().join("a.txt").exists());
+        assert_eq!(
+            fs::read_to_string(tmp.path().join("b.txt")).unwrap(),
+            "ONE\ntwo\nTHREE\n"
         );
     }
 }

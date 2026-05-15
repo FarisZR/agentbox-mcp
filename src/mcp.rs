@@ -150,7 +150,7 @@ async fn call_tool(state: AppState, params: Value) -> Result<Value, JsonRpcError
         }
         "apply_patch" => {
             let input: ApplyPatchInput = serde_json::from_value(args).map_err(invalid_params)?;
-            let out = apply_patch::apply(input, &state.config.exec.default_workdir);
+            let out = apply_patch::apply(input, &state.config.exec.default_workdir).await;
             Ok(
                 json!({"content":[{"type":"text","text": out.output.clone()}], "structuredContent": out}),
             )

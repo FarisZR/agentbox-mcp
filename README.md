@@ -39,6 +39,8 @@ cargo test --all
 
 `mode = "oauth_jwks"` fetches the configured JWKS and validates JWT issuer, audience, expiry/nbf through `jsonwebtoken`, and required scopes. It also exposes `/.well-known/oauth-protected-resource` and returns a bearer challenge on missing/invalid auth. See [docs/security-model.md](docs/security-model.md).
 
+For ChatGPT OAuth setup, see [docs/chatgpt-connector.md](docs/chatgpt-connector.md). `agentbox-mcp` is an OAuth protected resource, not an authorization server; use your IdP or OAuth gateway for the authorization and token endpoints, then configure this server to validate its JWTs.
+
 ## Tailscale Funnel
 
 Start the server on `127.0.0.1:8787`, then run:
@@ -70,4 +72,4 @@ Set `[tools].prefix = ""` to expose Codex-style names like `exec_command` and `w
 
 ## Known Limitations
 
-The MCP endpoint currently returns JSON responses for POST requests and `405` for GET SSE streams. This is allowed for simple Streamable HTTP request/response servers, but it does not implement server-to-client notifications or resumable SSE. The built-in Rust patcher covers Codex-style add/update/delete/move patches used by the integration tests, but is intentionally smaller than Codex’s full upstream patch crate.
+The MCP endpoint currently returns JSON responses for POST requests and `405` for GET SSE streams. This is allowed for simple Streamable HTTP request/response servers, but it does not implement server-to-client notifications or resumable SSE. The patch tool uses OpenAI Codex’s upstream `codex-apply-patch` crate pinned to the commit recorded in [docs/implementation-log.md](docs/implementation-log.md).

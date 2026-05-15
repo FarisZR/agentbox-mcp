@@ -8,6 +8,7 @@
 - OpenAI ChatGPT developer mode docs: https://developers.openai.com/api/docs/guides/developer-mode. Lines checked noted support for SSE and streaming HTTP and OAuth/no/mixed authentication.
 - OpenAI remote MCP docs: https://developers.openai.com/api/docs/guides/tools-connectors-mcp. Notes: remote MCP servers on public internet are listed through MCP tools/list and called through MCP tool calls.
 - OpenAI Codex source: https://github.com/openai/codex at commit `3dc278b68ea476e03d54a605df8fe52d4a0cef88`. Checked `codex-rs/core/src/tools/handlers/shell_spec.rs`, `codex-rs/core/src/unified_exec/process_manager.rs`, and `codex-rs/core/src/unified_exec/errors.rs`.
+- OpenAI Codex apply-patch source: `codex-rs/apply-patch` at commit `3dc278b68ea476e03d54a605df8fe52d4a0cef88`. The implementation now depends on the full upstream `codex-apply-patch` crate plus its Codex filesystem/absolute-path support crates, with Codex’s upstream tungstenite patches mirrored in this repo’s `Cargo.toml`.
 - Tailscale Funnel docs: https://tailscale.com/docs/reference/tailscale-cli/funnel, last validated Jan 26, 2026, and https://tailscale.com/docs/features/tailscale-funnel, last validated Jan 20, 2026.
 - Local Tailscale CLI: `tailscale version` reported `1.96.4`, commit `8cf541dfd1e0a97096c01cb775d5e26336f3bc6c`. `tailscale funnel --help` and `tailscale serve --help` were run; help showed `tailscale funnel <target>`, `--bg`, `--https`, `--set-path`, and `--yes`.
 
@@ -24,7 +25,7 @@
 
 - No sandbox, approvals, or permission escalation fields.
 - GET SSE is not implemented and returns 405.
-- The patcher is smaller than Codex upstream apply_patch but supports the required closed-loop patch workflow.
+- `agentbox_apply_patch` no longer uses a local patch approximation. It delegates to Codex’s upstream `codex_apply_patch::apply_patch`.
 
 ## Verification
 
@@ -39,7 +40,7 @@ cargo test --all
 
 ## Known Limitations
 
-- OAuth/JWKS validation is implemented, but the closed-loop uses static bearer auth.
+- OAuth/JWKS validation is implemented for the resource server, but the closed-loop uses static bearer auth. Production OAuth still requires an external authorization server or OAuth gateway that issues JWT access tokens with the configured issuer, audience, and scopes.
 - No resumable SSE/event stream support.
 - PTY terminal size is fixed at 120x24.
 - Ctrl-C is supported for TTY sessions by writing `\u0003` to the PTY and also sending SIGINT to the PTY child process on Unix. In closed-loop testing, the process exits and the PTY echoes `^C`; shell-level INT traps may vary by shell/interactivity mode.
