@@ -182,10 +182,10 @@ fn parse_skill(path: &Path, instruction_file: &Path, content: &str) -> SkillMeta
 }
 
 fn strip_front_matter(content: &str) -> &str {
-    if let Some(rest) = content.strip_prefix("---\n") {
-        if let Some(idx) = rest.find("\n---\n") {
-            return &rest[idx + 5..];
-        }
+    if let Some(rest) = content.strip_prefix("---\n")
+        && let Some(idx) = rest.find("\n---\n")
+    {
+        return &rest[idx + 5..];
     }
     content
 }

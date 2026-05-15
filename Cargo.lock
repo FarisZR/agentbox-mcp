@@ -16,6 +16,7 @@ dependencies = [
  "futures",
  "http",
  "jsonwebtoken",
+ "libc",
  "portable-pty",
  "predicates",
  "rand",

@@ -260,6 +260,7 @@ fn tool_defs(prefix: &str) -> Vec<Value> {
     ]
 }
 
+#[allow(clippy::too_many_arguments)]
 fn tool(
     prefix: &str,
     name: &str,

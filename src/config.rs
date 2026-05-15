@@ -10,7 +10,7 @@ pub struct Cli {
     pub config: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 pub struct Config {
     pub server: ServerConfig,
@@ -91,23 +91,10 @@ pub struct SkillsConfig {
     pub roots: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 pub struct BootstrapConfig {
     pub project_roots: Vec<String>,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            server: ServerConfig::default(),
-            tools: ToolsConfig::default(),
-            exec: ExecConfig::default(),
-            auth: AuthConfig::default(),
-            skills: SkillsConfig::default(),
-            bootstrap: BootstrapConfig::default(),
-        }
-    }
 }
 
 impl Default for ServerConfig {
@@ -185,14 +172,6 @@ impl Default for SkillsConfig {
     }
 }
 
-impl Default for BootstrapConfig {
-    fn default() -> Self {
-        Self {
-            project_roots: vec![],
-        }
-    }
-}
-
 impl Config {
     pub fn load(path: Option<&str>) -> anyhow::Result<Self> {
         let env_path = env::var("agentbox_MCP_CONFIG").ok();
@@ -239,10 +218,10 @@ impl Config {
 }
 
 pub fn expand_tilde(path: &str) -> String {
-    if let Some(rest) = path.strip_prefix("~/") {
-        if let Ok(home) = env::var("HOME") {
-            return format!("{home}/{rest}");
-        }
+    if let Some(rest) = path.strip_prefix("~/")
+        && let Ok(home) = env::var("HOME")
+    {
+        return format!("{home}/{rest}");
     }
     path.to_string()
 }

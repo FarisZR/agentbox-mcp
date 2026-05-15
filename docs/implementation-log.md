@@ -42,3 +42,4 @@ cargo test --all
 - OAuth/JWKS validation is implemented, but the closed-loop uses static bearer auth.
 - No resumable SSE/event stream support.
 - PTY terminal size is fixed at 120x24.
+- Ctrl-C is supported for TTY sessions by writing `\u0003` to the PTY and also sending SIGINT to the PTY child process on Unix. In closed-loop testing, the process exits and the PTY echoes `^C`; shell-level INT traps may vary by shell/interactivity mode.

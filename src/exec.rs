@@ -80,6 +80,7 @@ struct Session {
     last_used: Mutex<Instant>,
     writer: Mutex<Option<Box<dyn Write + Send>>>,
     child: Mutex<Option<tokio::process::Child>>,
+    pty_pid: Mutex<Option<u32>>,
 }
 
 pub struct ShellPlan {
@@ -219,6 +220,7 @@ impl ProcessManager {
             .slave
             .spawn_command(builder)
             .map_err(|e| ExecError::Other(format!("pty spawn failed: {e}")))?;
+        *session.pty_pid.lock().await = child.process_id();
         let mut reader = pair
             .master
             .try_clone_reader()
@@ -291,6 +293,14 @@ impl ProcessManager {
             if !session.tty {
                 return Err(ExecError::StdinClosed);
             }
+            if input.chars.contains('\u{3}')
+                && let Some(pid) = *session.pty_pid.lock().await
+            {
+                unsafe {
+                    libc::kill(-(pid as i32), libc::SIGINT);
+                    libc::kill(pid as i32, libc::SIGINT);
+                }
+            }
             let mut writer = session.writer.lock().await;
             let writer = writer
                 .as_mut()
@@ -330,6 +340,7 @@ impl ProcessManager {
             last_used: Mutex::new(Instant::now()),
             writer: Mutex::new(None),
             child: Mutex::new(None),
+            pty_pid: Mutex::new(None),
         }))
     }
 
@@ -394,10 +405,10 @@ impl ProcessManager {
         }
         drop(sessions);
         for id in expired {
-            if let Some(session) = self.sessions.lock().await.remove(&id) {
-                if let Some(mut child) = session.child.lock().await.take() {
-                    let _ = child.kill().await;
-                }
+            if let Some(session) = self.sessions.lock().await.remove(&id)
+                && let Some(mut child) = session.child.lock().await.take()
+            {
+                let _ = child.kill().await;
             }
         }
     }

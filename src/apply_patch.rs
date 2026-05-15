@@ -38,7 +38,7 @@ fn apply_inner(patch: &str, workdir: &str) -> Result<String, String> {
     if patch.ends_with('\n') {
         lines.push("");
     }
-    if lines.first() != Some(&"*** Begin Patch") || !lines.iter().any(|l| *l == "*** End Patch") {
+    if lines.first() != Some(&"*** Begin Patch") || !lines.contains(&"*** End Patch") {
         return Err("patch must start with *** Begin Patch and end with *** End Patch".into());
     }
     let root = Path::new(workdir);
@@ -78,11 +78,11 @@ fn apply_inner(patch: &str, workdir: &str) -> Result<String, String> {
         if let Some(path) = line.strip_prefix("*** Update File: ") {
             i += 1;
             let mut move_to = None;
-            if i < lines.len() {
-                if let Some(dest) = lines[i].strip_prefix("*** Move to: ") {
-                    move_to = Some(dest.to_string());
-                    i += 1;
-                }
+            if i < lines.len()
+                && let Some(dest) = lines[i].strip_prefix("*** Move to: ")
+            {
+                move_to = Some(dest.to_string());
+                i += 1;
             }
             if i < lines.len() && lines[i].starts_with("@@") {
                 i += 1;

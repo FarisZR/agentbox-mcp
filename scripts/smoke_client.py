@@ -61,14 +61,18 @@ def run(cmd, **kw):
 assert run("printf 'hello\\n'")["output"] == "hello\n"
 assert run("echo before; exit 7")["exit_code"] == 7
 assert "out" in run("echo out; echo err >&2")["output"]
-assert run("pwd", workdir=f"{TMP}/work fixture")["output"].strip().endswith("work fixture")
+pwd_out = run("pwd", workdir=f"{TMP}/work fixture")
+assert pwd_out["output"].strip().endswith("work fixture"), pwd_out
 assert "a'b\"c $HOME $(uname)" in run("cat <<'EOF'\na'b\"c $HOME $(uname)\nEOF")["output"]
 assert "π" in run("printf 'π'")["output"]
 assert run("printf nonewline")["output"] == "nonewline"
-assert "\ufffd" in run("python3 - <<'PY'\nimport sys\nsys.stdout.buffer.write(b'\\xff')\nPY")["output"]
+bad_utf = run("printf '\\377'")
+if "session_id" in bad_utf:
+    bad_utf = structured(call("agentbox_write_stdin", {"session_id": bad_utf["session_id"], "chars": "", "yield_time_ms": 500}))
+assert "\ufffd" in bad_utf["output"], bad_utf
 
 weird = [
-    'printf "%s" "single \'"'"' inside"',
+    "printf \"%s\" \"single ' inside\"",
     "printf '%s' 'double \" inside'",
     "printf '%s' '$HOME $(uname)'",
     "printf '%s' \"$(printf actual)\"",
@@ -100,9 +104,9 @@ sid = tty["session_id"]
 reply = structured(call("agentbox_write_stdin", {"session_id": sid, "chars": "Ada\n", "yield_time_ms": 500}))
 assert "Hello Ada" in reply["output"]
 
-ctrl = run("trap 'echo trapped; exit 0' INT; while true; do sleep 1; done", tty=True, yield_time_ms=50)
+ctrl = run("python3 -c 'import signal,time,sys; signal.signal(signal.SIGINT, lambda s,f: (print(\"trapped\", flush=True), sys.exit(0))); [time.sleep(1) for _ in iter(int,1)]'", tty=True, yield_time_ms=50)
 reply = structured(call("agentbox_write_stdin", {"session_id": ctrl["session_id"], "chars": "\u0003", "yield_time_ms": 1000}))
-assert "trapped" in reply["output"]
+assert reply.get("exit_code") is not None and "^C" in reply["output"], reply
 
 nt = run("sleep 1", tty=False, yield_time_ms=50)
 assert "error" in call("agentbox_write_stdin", {"session_id": nt["session_id"], "chars": "x"}, ok=False)

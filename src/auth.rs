@@ -48,12 +48,12 @@ pub struct AuthError {
 impl IntoResponse for AuthError {
     fn into_response(self) -> Response {
         let mut response = (self.status, self.message).into_response();
-        if let Some(value) = self.www_authenticate {
-            if let Ok(value) = value.parse() {
-                response
-                    .headers_mut()
-                    .insert(header::WWW_AUTHENTICATE, value);
-            }
+        if let Some(value) = self.www_authenticate
+            && let Ok(value) = value.parse()
+        {
+            response
+                .headers_mut()
+                .insert(header::WWW_AUTHENTICATE, value);
         }
         response
     }
@@ -132,8 +132,8 @@ impl AuthLayer {
             .ok_or_else(|| self.challenge("unknown jwt key id"))?;
         let key = DecodingKey::from_jwk(jwk).map_err(|_| self.server_error("invalid jwk"))?;
         let mut validation = Validation::new(header.alg);
-        validation.set_issuer(&[self.config.oauth.issuer.clone()]);
-        validation.set_audience(&[self.config.oauth.audience.clone()]);
+        validation.set_issuer(std::slice::from_ref(&self.config.oauth.issuer));
+        validation.set_audience(std::slice::from_ref(&self.config.oauth.audience));
         let data = decode::<Claims>(token, &key, &validation)
             .map_err(|_| self.challenge("invalid jwt"))?;
         let claims = data.claims;
