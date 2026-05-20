@@ -8,11 +8,18 @@ PORT="${PORT:-8787}"
 TOKEN="closed-loop-token"
 
 cleanup() {
+  status=$?
+  if [ "$status" -ne 0 ] && [ -f "$SERVER_LOG" ]; then
+    echo "----- agentbox-mcp server log -----" >&2
+    tail -200 "$SERVER_LOG" >&2 || true
+    echo "-----------------------------------" >&2
+  fi
   if [ -n "${SERVER_PID:-}" ]; then
     kill "$SERVER_PID" >/dev/null 2>&1 || true
     wait "$SERVER_PID" >/dev/null 2>&1 || true
   fi
   rm -rf "$TMP"
+  exit "$status"
 }
 trap cleanup EXIT
 

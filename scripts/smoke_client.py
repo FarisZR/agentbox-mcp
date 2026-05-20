@@ -58,6 +58,12 @@ assert "FULL RUST BODY" in loaded["content"]
 def run(cmd, **kw):
     return structured(call("agentbox_exec_command", {"cmd": cmd, **kw}))
 
+def run_to_exit(cmd, **kw):
+    out = run(cmd, **kw)
+    while "session_id" in out and out.get("exit_code") is None:
+        out = structured(call("agentbox_write_stdin", {"session_id": out["session_id"], "chars": "", "yield_time_ms": 1000}))
+    return out
+
 assert run("printf 'hello\\n'")["output"] == "hello\n"
 assert run("echo before; exit 7")["exit_code"] == 7
 assert "out" in run("echo out; echo err >&2")["output"]
@@ -66,7 +72,7 @@ assert pwd_out["output"].strip().endswith("work fixture"), pwd_out
 assert "a'b\"c $HOME $(uname)" in run("cat <<'EOF'\na'b\"c $HOME $(uname)\nEOF")["output"]
 assert "π" in run("printf 'π'")["output"]
 assert run("printf nonewline")["output"] == "nonewline"
-bad_utf = run("printf '\\377'")
+bad_utf = run("python3 -c 'import os; os.write(1, bytes([255]))'")
 if "session_id" in bad_utf:
     bad_utf = structured(call("agentbox_write_stdin", {"session_id": bad_utf["session_id"], "chars": "", "yield_time_ms": 500}))
 assert "\ufffd" in bad_utf["output"], bad_utf
@@ -126,7 +132,7 @@ assert any("A" in o for o in outs) and any("B" in o for o in outs)
 tr = run("python3 - <<'PY'\nprint('x'*2000)\nPY", max_output_tokens=20)
 assert "agentbox output truncated" in tr["output"] and tr["original_token_count"] > 20
 
-fail = run("cargo test", workdir=f"{TMP}/fixture")
+fail = run_to_exit("cargo test", workdir=f"{TMP}/fixture")
 assert fail["exit_code"] != 0
 patch = """*** Begin Patch
 *** Update File: src/lib.rs
@@ -137,7 +143,7 @@ patch = """*** Begin Patch
 """
 patched = structured(call("agentbox_apply_patch", {"patch": patch, "workdir": f"{TMP}/fixture"}))
 assert patched["status"] == "completed", patched
-success = run("cargo test", workdir=f"{TMP}/fixture")
+success = run_to_exit("cargo test", workdir=f"{TMP}/fixture")
 assert success["exit_code"] == 0, success["output"]
 
 print("smoke ok")

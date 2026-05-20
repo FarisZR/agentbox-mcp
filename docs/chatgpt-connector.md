@@ -15,12 +15,59 @@ Dedicated unsandboxed Linux agent environment for the user. Use this connector f
 Connector URL:
 
 ```text
-https://<tailscale-funnel-hostname>/mcp
+https://<tailscale-funnel-hostname>/mcp/<secret>
 ```
 
-In ChatGPT, enable Developer Mode, create an app/custom connector from the remote MCP URL, and select OAuth or no authentication depending on the configured entrance mode. Static bearer auth is useful for smoke testing but OAuth/JWKS is the production linking path.
+In ChatGPT, enable Developer Mode, create an app/custom connector from the remote MCP URL, and select `No authentication` for the simple setup below.
 
-## Quick OAuth Setup
+## Simple Setup Without OAuth
+
+ChatGPT web currently supports OAuth or no authentication for custom MCP connectors. It does not give you a simple field for `Authorization: Bearer <static-token>`. If you do not have an OAuth server, use a random secret in the MCP URL path and keep that URL private.
+
+This is the recommended barebones setup for a single-user dedicated agentbox:
+
+```bash
+./scripts/create-chatgpt-simple-config.sh agentbox-mcp.chatgpt.toml https://<tailscale-funnel-hostname>
+cargo run -- --config agentbox-mcp.chatgpt.toml
+```
+
+Expose it:
+
+```bash
+./scripts/setup-tailscale-funnel.sh
+```
+
+The generated script prints a connector URL like:
+
+```text
+https://<tailscale-funnel-hostname>/mcp/7f3b...64_hex_chars...
+```
+
+In ChatGPT on the web:
+
+1. Open `Settings`.
+2. Go to `Connectors`.
+3. Open `Advanced` and enable `Developer mode`.
+4. Add/import a remote MCP connector.
+5. Name it `Agentbox Execution Environment`.
+6. Use the full secret URL printed by the script.
+7. Choose `No authentication`.
+8. Refresh the connector tools and confirm the `agentbox_*` tools appear.
+
+Use a prompt like:
+
+```text
+Use the Agentbox Execution Environment connector. Call agentbox_bootstrap first, then use agentbox_exec_command for shell commands. Do not use hosted shell tools.
+```
+
+Security notes:
+
+- The path secret is a bearer credential. Anyone with the full URL can use the connector.
+- Keep the server bound to `127.0.0.1`; do not bind it directly to `0.0.0.0`.
+- Tailscale Funnel provides HTTPS, but Funnel is public. The secret path is what keeps random visitors out.
+- Rotate by generating a new config and restarting the server.
+
+## Optional OAuth Setup
 
 `agentbox-mcp` is an OAuth protected resource. It validates access tokens, but it does not implement the OAuth authorization server itself. Use an IdP or OAuth gateway such as Auth0, Okta, Zitadel, Keycloak, Dex, or your internal auth service.
 

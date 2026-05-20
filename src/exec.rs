@@ -351,7 +351,11 @@ impl ProcessManager {
         let deadline = Instant::now() + Duration::from_millis(ms);
         loop {
             let exited = session.exit_code.lock().await.is_some();
-            if exited || Instant::now() >= deadline {
+            if exited {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+                break;
+            }
+            if Instant::now() >= deadline {
                 break;
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
