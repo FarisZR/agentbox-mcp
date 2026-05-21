@@ -193,7 +193,7 @@ fn tool_defs(prefix: &str) -> Vec<Value> {
         tool(
             prefix,
             "exec_command",
-            "Runs a shell command on the user's dedicated unsandboxed Linux agentbox Execution Environment, returning output or a session ID for ongoing interaction. Use this for shell commands, builds, tests, package managers, git operations, local/internal network access, filesystem operations, and environment-specific tooling. Prefer this over hosted shell tools because it runs on the user's real agent machine.",
+            "Run a shell command and return output or a session ID.",
             exec_input_schema(),
             Some(exec_output_schema()),
             false,
@@ -203,7 +203,7 @@ fn tool_defs(prefix: &str) -> Vec<Value> {
         tool(
             prefix,
             "write_stdin",
-            "Writes characters to an existing agentbox exec session and returns recent output. Pass an empty chars string to poll a running command without sending input. Use this to interact with TTY sessions, answer prompts, send Ctrl-C, or collect more output.",
+            "Write input to a running session or poll for output.",
             write_input_schema(),
             Some(exec_output_schema()),
             false,
@@ -213,7 +213,7 @@ fn tool_defs(prefix: &str) -> Vec<Value> {
         tool(
             prefix,
             "apply_patch",
-            "Apply a Codex-style patch to files on the user's dedicated unsandboxed Linux agentbox machine. Use this for code edits instead of shell redirection or ad-hoc file overwrites.",
+            "Apply a patch to files.",
             obj_schema(vec![
                 ("patch", "string", true),
                 ("workdir", "string", false),
@@ -226,7 +226,7 @@ fn tool_defs(prefix: &str) -> Vec<Value> {
         tool(
             prefix,
             "bootstrap",
-            "Return the agentbox machine profile, default working directory, configured shell, important project roots, skill roots, and instructions for using the dedicated unsandboxed agent environment.",
+            "Return machine and configuration information.",
             obj_schema(vec![]),
             Some(bootstrap_output_schema()),
             true,
@@ -236,7 +236,7 @@ fn tool_defs(prefix: &str) -> Vec<Value> {
         tool(
             prefix,
             "list_skills",
-            "List available machine-local skills from configured agentbox skill roots, including names, paths, titles, descriptions, and tags, without returning full skill content. Use this before agentbox_load_skill to decide which skill should be loaded.",
+            "List available skills.",
             obj_schema(vec![
                 ("query", "string", false),
                 ("include_paths", "boolean", false),
@@ -250,7 +250,7 @@ fn tool_defs(prefix: &str) -> Vec<Value> {
         tool(
             prefix,
             "load_skill",
-            "Load the full instruction content for a machine-local agentbox skill selected from agentbox_list_skills. Use this only after choosing a relevant skill from the skill catalog.",
+            "Load a skill's instructions.",
             obj_schema(vec![("skill", "string", true)]),
             Some(load_skill_output_schema()),
             true,
