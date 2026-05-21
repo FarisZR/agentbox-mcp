@@ -218,7 +218,7 @@ fn tool_defs(prefix: &str) -> Vec<Value> {
                 ("patch", "string", true),
                 ("workdir", "string", false),
             ]),
-            None,
+            Some(apply_patch_output_schema()),
             false,
             true,
             true,
@@ -228,7 +228,7 @@ fn tool_defs(prefix: &str) -> Vec<Value> {
             "bootstrap",
             "Return the agentbox machine profile, default working directory, configured shell, important project roots, skill roots, and instructions for using the dedicated unsandboxed agent environment.",
             obj_schema(vec![]),
-            None,
+            Some(bootstrap_output_schema()),
             true,
             false,
             false,
@@ -242,7 +242,7 @@ fn tool_defs(prefix: &str) -> Vec<Value> {
                 ("include_paths", "boolean", false),
                 ("max_results", "number", false),
             ]),
-            None,
+            Some(list_skills_output_schema()),
             true,
             false,
             false,
@@ -252,7 +252,7 @@ fn tool_defs(prefix: &str) -> Vec<Value> {
             "load_skill",
             "Load the full instruction content for a machine-local agentbox skill selected from agentbox_list_skills. Use this only after choosing a relevant skill from the skill catalog.",
             obj_schema(vec![("skill", "string", true)]),
-            None,
+            Some(load_skill_output_schema()),
             true,
             false,
             false,
@@ -332,6 +332,101 @@ fn exec_output_schema() -> Value {
             "output": {"type":"string"}
         },
         "required": ["wall_time_seconds", "output"],
+        "additionalProperties": false
+    })
+}
+
+fn apply_patch_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "status": {"type": "string", "enum": ["completed", "failed"]},
+            "output": {"type": "string"}
+        },
+        "required": ["status", "output"],
+        "additionalProperties": false
+    })
+}
+
+fn bootstrap_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "hostname": {"type": "string"},
+            "os_info": {"type": "string"},
+            "current_user": {"type": "string"},
+            "default_shell": {"type": "string"},
+            "default_workdir": {"type": "string"},
+            "public_base_url": {"type": ["string", "null"]},
+            "project_roots": {"type": "array", "items": {"type": "string"}},
+            "skill_roots": {"type": "array", "items": {"type": "string"}},
+            "common_available_tools": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "path": {"type": ["string", "null"]}
+                    },
+                    "required": ["name"],
+                    "additionalProperties": false
+                }
+            },
+            "instructions": {"type": "array", "items": {"type": "string"}}
+        },
+        "required": [
+            "hostname",
+            "os_info",
+            "current_user",
+            "default_shell",
+            "default_workdir",
+            "project_roots",
+            "skill_roots",
+            "common_available_tools",
+            "instructions"
+        ],
+        "additionalProperties": false
+    })
+}
+
+fn list_skills_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "skill_roots": {"type": "array", "items": {"type": "string"}},
+            "skills": {
+                "type": "array",
+                "items": skill_meta_schema()
+            }
+        },
+        "required": ["skill_roots", "skills"],
+        "additionalProperties": false
+    })
+}
+
+fn load_skill_output_schema() -> Value {
+    let mut schema = skill_meta_schema();
+    if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
+        properties.insert("content".to_string(), json!({"type": "string"}));
+    }
+    if let Some(required) = schema.get_mut("required").and_then(Value::as_array_mut) {
+        required.push(Value::String("content".to_string()));
+    }
+    schema
+}
+
+fn skill_meta_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "name": {"type": "string"},
+            "title": {"type": "string"},
+            "description": {"type": "string"},
+            "tags": {"type": "array", "items": {"type": "string"}},
+            "path": {"type": ["string", "null"]},
+            "instruction_file": {"type": ["string", "null"]}
+        },
+        "required": ["name", "title", "description", "tags"],
         "additionalProperties": false
     })
 }

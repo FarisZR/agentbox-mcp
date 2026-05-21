@@ -44,6 +44,7 @@ for name in ["agentbox_exec_command", "agentbox_write_stdin", "agentbox_apply_pa
     assert name in names, name
 for t in tools:
     assert "annotations" in t
+    assert "outputSchema" in t, t["name"]
 
 bad = rpc("initialize", token="wrong", ok=False)
 assert bad["http_error"] == 401

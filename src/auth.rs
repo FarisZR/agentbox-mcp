@@ -108,12 +108,28 @@ impl AuthLayer {
 
     fn check_static(&self, headers: &HeaderMap) -> Result<(), AuthError> {
         let presented = self.bearer(headers)?;
-        let expected = env::var(&self.config.static_bearer.token_env)
-            .map_err(|_| self.server_error("static bearer token env var is not set"))?;
+        let expected = self.static_bearer_token()?;
         if constant_time_eq(presented.as_bytes(), expected.as_bytes()) {
             Ok(())
         } else {
             Err(self.challenge("invalid bearer token"))
+        }
+    }
+
+    fn static_bearer_token(&self) -> Result<String, AuthError> {
+        match env::var(&self.config.static_bearer.token_env) {
+            Ok(token) if !token.is_empty() => Ok(token),
+            _ => self
+                .config
+                .static_bearer
+                .token
+                .clone()
+                .filter(|token| !token.is_empty())
+                .ok_or_else(|| {
+                    self.server_error(
+                        "static bearer token is not set; configure token or token_env",
+                    )
+                }),
         }
     }
 
@@ -213,16 +229,29 @@ mod tests {
 
     #[test]
     fn static_bearer_accepts_and_rejects() {
-        unsafe { env::set_var("agentbox_MCP_TOKEN", "secret") };
-        let auth = AuthLayer {
-            config: AuthConfig::default(),
-            jwks: None,
-        };
+        unsafe { env::set_var("agentbox_TEST_TOKEN", "secret") };
+        let mut config = AuthConfig::default();
+        config.static_bearer.token_env = "agentbox_TEST_TOKEN".to_string();
+        let auth = AuthLayer { config, jwks: None };
         let mut headers = HeaderMap::new();
         assert!(auth.check(&headers).is_err());
         headers.insert(header::AUTHORIZATION, "Bearer nope".parse().unwrap());
         assert!(auth.check(&headers).is_err());
         headers.insert(header::AUTHORIZATION, "Bearer secret".parse().unwrap());
+        assert!(auth.check(&headers).is_ok());
+    }
+
+    #[test]
+    fn static_bearer_accepts_config_token() {
+        let mut config = AuthConfig::default();
+        config.static_bearer.token_env = "agentbox_TEST_MISSING_TOKEN".to_string();
+        config.static_bearer.token = Some("config-secret".to_string());
+        let auth = AuthLayer { config, jwks: None };
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            "Bearer config-secret".parse().unwrap(),
+        );
         assert!(auth.check(&headers).is_ok());
     }
 }

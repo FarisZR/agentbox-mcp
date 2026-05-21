@@ -73,6 +73,7 @@ pub enum AuthMode {
 #[serde(default)]
 pub struct StaticBearerConfig {
     pub token_env: String,
+    pub token: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -148,6 +149,7 @@ impl Default for StaticBearerConfig {
     fn default() -> Self {
         Self {
             token_env: "agentbox_MCP_TOKEN".to_string(),
+            token: None,
         }
     }
 }

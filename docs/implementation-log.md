@@ -5,7 +5,7 @@
 - MCP Streamable HTTP specification: https://modelcontextprotocol.io/specification/2025-06-18/basic/transports. Current protocol version observed: `2025-06-18`. Notes: a single MCP endpoint supports POST and optionally GET SSE; GET may return 405 when SSE is not offered.
 - MCP overview/schema: https://modelcontextprotocol.io/specification/2025-06-18/basic/index and https://modelcontextprotocol.io/specification/2025-06-18/schema.
 - rmcp Rust SDK: https://github.com/modelcontextprotocol/rust-sdk at commit `cc66e3091e1584f48ee1e0058a2a1201a1d35c81`. Checked `crates/rmcp/tests/test_with_js.rs` and `crates/rmcp/src/transport/streamable_http_server/tower.rs` for Streamable HTTP behavior and JSON response mode.
-- OpenAI ChatGPT developer mode docs: https://platform.openai.com/docs/developer-mode. Lines checked on 2026-05-20 noted supported connector protocols are SSE and streaming HTTP, and supported authentication is OAuth or no authentication.
+- OpenAI ChatGPT developer mode docs: https://platform.openai.com/docs/developer-mode. Earlier docs noted OAuth/no authentication for Developer Mode; the project now supports static bearer tokens through `Authorization: Bearer <token>` as requested for ChatGPT connector API key / bearer token setup.
 - OpenAI remote MCP docs: https://developers.openai.com/api/docs/guides/tools-connectors-mcp. Notes: remote MCP servers on public internet are listed through MCP tools/list and called through MCP tool calls.
 - OpenAI Codex source: https://github.com/openai/codex at commit `3dc278b68ea476e03d54a605df8fe52d4a0cef88`. Checked `codex-rs/core/src/tools/handlers/shell_spec.rs`, `codex-rs/core/src/unified_exec/process_manager.rs`, and `codex-rs/core/src/unified_exec/errors.rs`.
 - OpenAI Codex apply-patch source: `codex-rs/apply-patch` at commit `3dc278b68ea476e03d54a605df8fe52d4a0cef88`. The implementation now depends on the full upstream `codex-apply-patch` crate plus its Codex filesystem/absolute-path support crates, with Codex’s upstream tungstenite patches mirrored in this repo’s `Cargo.toml`.
@@ -40,7 +40,7 @@ cargo test --all
 
 ## Known Limitations
 
-- OAuth/JWKS validation is implemented for the resource server, but ChatGPT web without your own OAuth server should use the documented high-entropy secret MCP path with `auth.mode = "none"`. Static bearer remains useful for smoke tests and clients that can send `Authorization` headers.
+- OAuth/JWKS validation is implemented for the resource server, but the recommended no-IdP ChatGPT setup is static bearer auth with a generated 256-bit token. `auth.mode = "none"` plus a secret path remains available only as a fallback for clients that cannot send authorization headers.
 - No resumable SSE/event stream support.
 - PTY terminal size is fixed at 120x24.
 - Ctrl-C is supported for TTY sessions by writing `\u0003` to the PTY and also sending SIGINT to the PTY child process on Unix. In closed-loop testing, the process exits and the PTY echoes `^C`; shell-level INT traps may vary by shell/interactivity mode.

@@ -4,7 +4,14 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d)"
 SERVER_LOG="${TMP}/server.log"
-PORT="${PORT:-8787}"
+PORT="${PORT:-$(python3 - <<'PY'
+import socket
+s = socket.socket()
+s.bind(("127.0.0.1", 0))
+print(s.getsockname()[1])
+s.close()
+PY
+)}"
 TOKEN="closed-loop-token"
 
 cleanup() {

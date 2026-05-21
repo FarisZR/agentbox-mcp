@@ -55,8 +55,8 @@ tailscale funnel status || true
 HOST="$(tailscale status --json | python3 -c 'import json,sys; s=json.load(sys.stdin); print(s.get("Self",{}).get("DNSName","").rstrip("."))')"
 if [ -n "$HOST" ]; then
   echo "Public base URL: https://${HOST}"
-  echo "Default ChatGPT connector URL: https://${HOST}/mcp"
-  echo "If using config.chatgpt-simple.example.toml or a generated secret config, use the full secret mcp_path from that config."
+  echo "ChatGPT connector URL: https://${HOST}/mcp"
+  echo "If using static bearer auth, configure ChatGPT with API key / bearer token authentication."
   echo "Verify:"
   echo "  curl -H \"Authorization: Bearer \$agentbox_MCP_TOKEN\" https://${HOST}/mcp"
 fi

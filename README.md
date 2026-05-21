@@ -2,7 +2,7 @@
 
 `agentbox-mcp` is a Rust Streamable HTTP MCP server for a dedicated Linux agent machine. It exposes Codex-style execution tools to ChatGPT so the model can run commands, interact with long-lived TTY sessions, apply patches, inspect local skills, and bootstrap itself into the real machine context.
 
-The execution tools are intentionally unsandboxed after the MCP entrance check. Security belongs at the MCP entrance: use OAuth/JWKS if you have it, static bearer for clients that can send headers, or the documented secret URL path for the barebones ChatGPT setup.
+The execution tools are intentionally unsandboxed after the MCP entrance check. Security belongs at the MCP entrance: use a strong static bearer token for the simple ChatGPT setup, or OAuth/JWKS if you later add an identity provider.
 
 ## Build
 
@@ -35,16 +35,16 @@ cargo test --all
 
 ## Authentication
 
-`mode = "static_bearer"` reads the token from `agentbox_MCP_TOKEN` by default and requires `Authorization: Bearer <token>`. This is best for clients that can send custom headers.
+`mode = "static_bearer"` requires `Authorization: Bearer <token>`. The token can come from `agentbox_MCP_TOKEN` or from `[auth.static_bearer].token` in the config.
 
-ChatGPT web Developer Mode currently supports OAuth or no authentication for custom MCP connectors. If you do not have OAuth, use `config.chatgpt-simple.example.toml` or generate a private config:
+For the simplest ChatGPT setup, generate a config with a hardcoded random bearer token:
 
 ```bash
-./scripts/create-chatgpt-simple-config.sh agentbox-mcp.chatgpt.toml https://<tailscale-hostname>
+./scripts/create-chatgpt-bearer-config.sh agentbox-mcp.chatgpt.toml https://<tailscale-hostname>
 cargo run -- --config agentbox-mcp.chatgpt.toml
 ```
 
-Then add the printed secret URL in ChatGPT and choose `No authentication`.
+Then add `https://<tailscale-hostname>/mcp` in ChatGPT and choose API key / bearer token authentication with the printed token.
 
 `mode = "oauth_jwks"` remains available if you later add a real IdP. It fetches the configured JWKS and validates JWT issuer, audience, expiry/nbf through `jsonwebtoken`, and required scopes.
 
@@ -64,7 +64,7 @@ The script checks Tailscale login state, verifies `/healthz`, prints the Funnel 
 tailscale funnel --bg --https=443 --yes 127.0.0.1:8787
 ```
 
-Use the full MCP URL from your config as the ChatGPT custom MCP connector URL. For the simple setup this looks like `https://<tailscale-hostname>/mcp/<64-hex-secret>`. See [docs/tailscale-funnel.md](docs/tailscale-funnel.md).
+Use `https://<tailscale-hostname>/mcp` as the ChatGPT custom MCP connector URL and configure API key / bearer token authentication with your generated token. See [docs/tailscale-funnel.md](docs/tailscale-funnel.md).
 
 ## Tool Reference
 
