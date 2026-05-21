@@ -41,6 +41,7 @@ audience = "https://agentbox.example.com"
 required_scopes = ["agentbox:exec"]
 
 [skills]
+enabled = true
 roots = [
   "/home/agent/.agents",
   "/opt/agentbox/skills",

@@ -96,7 +96,7 @@ async fn mcp_post(
     }
     let result = match req.method.as_str() {
         "initialize" => Ok(initialize_result()),
-        "tools/list" => Ok(json!({"tools": tool_defs(&state.config.tools.prefix)})),
+        "tools/list" => Ok(json!({"tools": tool_defs(&state.config)})),
         "tools/call" => call_tool(state, req.params).await,
         _ => Err(jsonrpc_err(
             -32601,
@@ -162,6 +162,9 @@ async fn call_tool(state: AppState, params: Value) -> Result<Value, JsonRpcError
             )
         }
         "list_skills" => {
+            if !state.config.skills.enabled {
+                return Err(jsonrpc_err(-32602, "skill tools are disabled", None));
+            }
             let input: ListSkillsInput = serde_json::from_value(args).map_err(invalid_params)?;
             let out = state.skills.list(input);
             Ok(
@@ -169,6 +172,9 @@ async fn call_tool(state: AppState, params: Value) -> Result<Value, JsonRpcError
             )
         }
         "load_skill" => {
+            if !state.config.skills.enabled {
+                return Err(jsonrpc_err(-32602, "skill tools are disabled", None));
+            }
             let input: LoadSkillInput = serde_json::from_value(args).map_err(invalid_params)?;
             let out = state.skills.load(input).map_err(tool_err)?;
             Ok(
@@ -188,12 +194,13 @@ fn initialize_result() -> Value {
     })
 }
 
-fn tool_defs(prefix: &str) -> Vec<Value> {
-    vec![
+fn tool_defs(config: &Config) -> Vec<Value> {
+    let prefix = &config.tools.prefix;
+    let mut tools = vec![
         tool(
             prefix,
             "exec_command",
-            "Run a shell command and return output or a session ID.",
+            "Run a shell command on the persistent machine with real access.",
             exec_input_schema(),
             Some(exec_output_schema()),
             false,
@@ -203,7 +210,7 @@ fn tool_defs(prefix: &str) -> Vec<Value> {
         tool(
             prefix,
             "write_stdin",
-            "Write input to a running session or poll for output.",
+            "Write input to, or poll output from, a real-access persistent machine session.",
             write_input_schema(),
             Some(exec_output_schema()),
             false,
@@ -213,7 +220,7 @@ fn tool_defs(prefix: &str) -> Vec<Value> {
         tool(
             prefix,
             "apply_patch",
-            "Apply a patch to files.",
+            "Apply a patch to files on the persistent machine with real access.",
             obj_schema(vec![
                 ("patch", "string", true),
                 ("workdir", "string", false),
@@ -226,38 +233,45 @@ fn tool_defs(prefix: &str) -> Vec<Value> {
         tool(
             prefix,
             "bootstrap",
-            "Return machine and configuration information.",
+            "Return information about the persistent machine with real access.",
             obj_schema(vec![]),
             Some(bootstrap_output_schema()),
             true,
             false,
             false,
         ),
-        tool(
-            prefix,
-            "list_skills",
-            "List available skills.",
-            obj_schema(vec![
-                ("query", "string", false),
-                ("include_paths", "boolean", false),
-                ("max_results", "number", false),
-            ]),
-            Some(list_skills_output_schema()),
-            true,
-            false,
-            false,
-        ),
-        tool(
-            prefix,
-            "load_skill",
-            "Load a skill's instructions.",
-            obj_schema(vec![("skill", "string", true)]),
-            Some(load_skill_output_schema()),
-            true,
-            false,
-            false,
-        ),
-    ]
+    ];
+
+    if config.skills.enabled {
+        tools.extend([
+            tool(
+                prefix,
+                "list_skills",
+                "List skills available on the persistent machine.",
+                obj_schema(vec![
+                    ("query", "string", false),
+                    ("include_paths", "boolean", false),
+                    ("max_results", "number", false),
+                ]),
+                Some(list_skills_output_schema()),
+                true,
+                false,
+                false,
+            ),
+            tool(
+                prefix,
+                "load_skill",
+                "Load skill instructions from the persistent machine.",
+                obj_schema(vec![("skill", "string", true)]),
+                Some(load_skill_output_schema()),
+                true,
+                false,
+                false,
+            ),
+        ]);
+    }
+
+    tools
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -454,4 +468,57 @@ fn invalid_params(err: serde_json::Error) -> JsonRpcError {
 
 fn tool_err(err: impl std::fmt::Display) -> JsonRpcError {
     jsonrpc_err(-32000, err.to_string(), None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_descriptions_are_short_but_identify_persistent_machine() {
+        let config = Config::default();
+        let tools = tool_defs(&config);
+        for tool in tools {
+            let description = tool
+                .get("description")
+                .and_then(Value::as_str)
+                .expect("tool description");
+            assert!(
+                description.len() <= 90,
+                "description too long: {description}"
+            );
+            if tool
+                .get("name")
+                .and_then(Value::as_str)
+                .is_some_and(|name| name != "agentbox_list_skills" && name != "agentbox_load_skill")
+            {
+                assert!(
+                    description.contains("persistent machine"),
+                    "description should mention persistent machine: {description}"
+                );
+                assert!(
+                    description.contains("real access") || description.contains("real-access"),
+                    "description should distinguish the environment: {description}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn skill_tools_can_be_disabled() {
+        let mut config = Config::default();
+        config.skills.enabled = false;
+        let names = tool_defs(&config)
+            .into_iter()
+            .map(|tool| {
+                tool.get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+        assert!(!names.contains(&"agentbox_list_skills".to_string()));
+        assert!(!names.contains(&"agentbox_load_skill".to_string()));
+        assert!(names.contains(&"agentbox_exec_command".to_string()));
+    }
 }

@@ -20,6 +20,8 @@
 - Non-TTY stdin is closed and `write_stdin` rejects non-empty input.
 - TTY sessions use `portable-pty`.
 - Output is lossy UTF-8 and truncated with a head/tail marker using approximate chars/4 token counting.
+- Tool descriptions are intentionally short, but identify that commands and file edits run on a persistent machine with real access rather than an ephemeral sandbox.
+- `[skills].enabled` controls whether skill discovery/loading tools are exposed. Disable it when skills are provided at the agent level instead of the MCP level.
 
 ## Deviations From Codex
 

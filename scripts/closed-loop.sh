@@ -98,6 +98,7 @@ audience = "https://agentbox.example.com"
 required_scopes = ["agentbox:exec"]
 
 [skills]
+enabled = true
 roots = ["${TMP}/skills"]
 [bootstrap]
 project_roots = ["${TMP}/fixture"]

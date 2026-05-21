@@ -226,6 +226,7 @@ mod tests {
         )
         .unwrap();
         let cat = SkillCatalog::new(SkillsConfig {
+            enabled: true,
             roots: vec![tmp.path().display().to_string()],
         });
         let list = cat.list(ListSkillsInput {

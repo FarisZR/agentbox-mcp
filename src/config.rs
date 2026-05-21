@@ -89,6 +89,7 @@ pub struct OAuthConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct SkillsConfig {
+    pub enabled: bool,
     pub roots: Vec<String>,
 }
 
@@ -169,6 +170,7 @@ impl Default for OAuthConfig {
 impl Default for SkillsConfig {
     fn default() -> Self {
         Self {
+            enabled: true,
             roots: vec!["~/.agents".to_string(), "/opt/agentbox/skills".to_string()],
         }
     }

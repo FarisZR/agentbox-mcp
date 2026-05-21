@@ -6,7 +6,7 @@
 - `auth`: entrance authentication for none, static bearer, and OAuth/JWKS.
 - `exec`: unsandboxed process/session manager.
 - `apply_patch`: Codex-style filesystem patching.
-- `skills`: skill discovery and loading.
+- `skills`: optional skill discovery and loading.
 - `bootstrap`: machine profile.
 - `config`: TOML config and env overrides.
 
@@ -18,3 +18,5 @@ shell -c "<cmd>"
 ```
 
 Non-TTY sessions use `tokio::process::Command` with stdin closed and stdout/stderr captured into one output buffer. TTY sessions use `portable-pty` and keep a PTY writer for `write_stdin`.
+
+Set `[skills].enabled = false` to omit `agentbox_list_skills` and `agentbox_load_skill` from `tools/list`.

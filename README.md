@@ -70,14 +70,15 @@ Use `https://<tailscale-hostname>/mcp` as the ChatGPT custom MCP connector URL a
 
 Default names use the `agentbox_` prefix:
 
-- `agentbox_exec_command`: run a shell command and return output or `session_id`.
-- `agentbox_write_stdin`: poll or write to a running TTY session.
-- `agentbox_apply_patch`: apply a Codex-style patch to the real filesystem.
-- `agentbox_bootstrap`: return machine profile and usage instructions.
+- `agentbox_exec_command`: run a shell command on the persistent machine with real access.
+- `agentbox_write_stdin`: poll or write to a real-access persistent machine session.
+- `agentbox_apply_patch`: apply a patch to files on the persistent machine with real access.
+- `agentbox_bootstrap`: return information about the persistent machine with real access.
 - `agentbox_list_skills`: compact skill catalog only.
 - `agentbox_load_skill`: full selected skill instructions.
 
 Set `[tools].prefix = ""` to expose Codex-style names like `exec_command` and `write_stdin`.
+Set `[skills].enabled = false` to omit the skill tools when skills are provided outside MCP.
 
 ## Known Limitations
 

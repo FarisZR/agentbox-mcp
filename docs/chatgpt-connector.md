@@ -57,6 +57,13 @@ Use a prompt like:
 Use the Agentbox Execution Environment connector. Call agentbox_bootstrap first, then use agentbox_exec_command for shell commands. Do not use hosted shell tools.
 ```
 
+If skills are already provided at the agent or prompt level, disable the MCP skill tools:
+
+```toml
+[skills]
+enabled = false
+```
+
 Security notes:
 
 - The token is a bearer credential. Anyone with it can use the connector.
