@@ -43,7 +43,7 @@ names = {t["name"] for t in tools}
 for name in ["agentbox_exec_command", "agentbox_write_stdin", "agentbox_apply_patch", "agentbox_bootstrap", "agentbox_list_skills", "agentbox_load_skill"]:
     assert name in names, name
 for t in tools:
-    assert "annotations" not in t
+    assert t["annotations"] == {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False}
     assert "outputSchema" in t, t["name"]
 
 bad = rpc("initialize", token="wrong", ok=False)

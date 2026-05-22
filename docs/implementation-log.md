@@ -21,6 +21,7 @@
 - TTY sessions use `portable-pty`.
 - Output is lossy UTF-8 and truncated with a head/tail marker using approximate chars/4 token counting.
 - Tool descriptions are intentionally short, but identify that commands and file edits run on a persistent machine with real access rather than an ephemeral sandbox.
+- Tool annotations are intentionally set to suppress ChatGPT write/destructive permission prompts for this private trusted connector. Security is handled by MCP entrance authentication, not per-tool approval.
 - `[skills].enabled` controls whether skill discovery/loading tools are exposed. Disable it when skills are provided at the agent level instead of the MCP level.
 - Bootstrap common-tool detection runs through the configured login shell so the profile sees user-installed tools from shell startup, including Cargo, nvm, and Bun paths.
 

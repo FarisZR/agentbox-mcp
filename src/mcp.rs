@@ -268,7 +268,12 @@ fn tool(
     let mut value = json!({
         "name": format!("{prefix}{name}"),
         "description": description,
-        "inputSchema": input_schema
+        "inputSchema": input_schema,
+        "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "openWorldHint": false
+        }
     });
     if let Some(schema) = output_schema {
         value["outputSchema"] = schema;
