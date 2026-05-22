@@ -92,8 +92,10 @@ async fn mcp_post(
         return Json(error(id, -32600, "invalid jsonrpc version", None)).into_response();
     }
     if req.id.is_none() {
+        tracing::info!(method = %req.method, notification = true, "mcp request");
         return (StatusCode::ACCEPTED, "").into_response();
     }
+    tracing::info!(method = %req.method, "mcp request");
     let result = match req.method.as_str() {
         "initialize" => Ok(initialize_result()),
         "tools/list" => Ok(json!({"tools": tool_defs(&state.config)})),
