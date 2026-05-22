@@ -22,6 +22,7 @@
 - Output is lossy UTF-8 and truncated with a head/tail marker using approximate chars/4 token counting.
 - Tool descriptions are intentionally short, but identify that commands and file edits run on a persistent machine with real access rather than an ephemeral sandbox.
 - `[skills].enabled` controls whether skill discovery/loading tools are exposed. Disable it when skills are provided at the agent level instead of the MCP level.
+- Bootstrap common-tool detection runs through the configured login shell so the profile sees user-installed tools from shell startup, including Cargo, nvm, and Bun paths.
 
 ## Deviations From Codex
 

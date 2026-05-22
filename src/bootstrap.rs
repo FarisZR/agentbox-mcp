@@ -1,6 +1,7 @@
 use std::{env, fs, process::Command, sync::Arc};
 
 use serde::Serialize;
+use shell_words::quote;
 
 use crate::config::Config;
 
@@ -61,7 +62,7 @@ impl Bootstrapper {
                 .unwrap_or_else(|_| env::consts::OS.to_string()),
             current_user: env::var("USER")
                 .unwrap_or_else(|_| command_output("id", &["-un"]).unwrap_or_default()),
-            default_shell: shell,
+            default_shell: shell.clone(),
             default_workdir: self.config.exec.default_workdir.clone(),
             public_base_url: self.config.server.public_base_url.clone(),
             project_roots: self.config.bootstrap.project_roots.clone(),
@@ -87,16 +88,22 @@ impl Bootstrapper {
             .into_iter()
             .map(|name| ToolAvailability {
                 name: name.to_string(),
-                path: which(name),
+                path: self.which(name, &shell),
             })
             .collect(),
             instructions,
         }
     }
-}
 
-fn which(name: &str) -> Option<String> {
-    command_output("which", &[name]).filter(|s| !s.is_empty())
+    fn which(&self, name: &str, shell: &str) -> Option<String> {
+        login_shell_output(
+            shell,
+            &format!("command -v -- {}", quote(name)),
+            &self.config.exec.default_workdir,
+            self.config.exec.login_default,
+        )
+        .filter(|s| !s.is_empty())
+    }
 }
 
 fn command_output(cmd: &str, args: &[&str]) -> Option<String> {
@@ -105,4 +112,73 @@ fn command_output(cmd: &str, args: &[&str]) -> Option<String> {
         return None;
     }
     Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn login_shell_output(shell: &str, cmd: &str, workdir: &str, login: bool) -> Option<String> {
+    let output = Command::new(shell)
+        .arg(if login { "-lc" } else { "-c" })
+        .arg(cmd)
+        .current_dir(workdir)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use tempfile::TempDir;
+
+    use super::*;
+    use crate::config::{Config, ExecConfig};
+
+    #[test]
+    fn login_shell_tool_detection_sees_user_profile_path() {
+        let tmp = TempDir::new().unwrap();
+        let bin = tmp.path().join("bin");
+        fs::create_dir(&bin).unwrap();
+        let tool = bin.join("agentbox-test-tool");
+        fs::write(&tool, "#!/bin/sh\n").unwrap();
+
+        let shell = tmp.path().join("shell");
+        fs::write(
+            &shell,
+            format!(
+                "#!/bin/sh\nif [ \"$1\" = \"-lc\" ]; then shift; PATH=\"{}:$PATH\" exec /bin/sh -c \"$1\"; fi\nexec /bin/sh \"$@\"\n",
+                bin.display()
+            ),
+        )
+        .unwrap();
+        let mut perms = fs::metadata(&shell).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut tool_perms = fs::metadata(&tool).unwrap().permissions();
+            tool_perms.set_mode(0o755);
+            fs::set_permissions(&tool, tool_perms).unwrap();
+            perms.set_mode(0o755);
+            fs::set_permissions(&shell, perms).unwrap();
+        }
+
+        let mut config = Config {
+            exec: ExecConfig {
+                default_shell: Some(shell.display().to_string()),
+                default_workdir: tmp.path().display().to_string(),
+                login_default: true,
+                ..ExecConfig::default()
+            },
+            ..Config::default()
+        };
+        config.skills.enabled = false;
+        let bootstrap = Bootstrapper::new(Arc::new(config));
+
+        assert_eq!(
+            bootstrap.which("agentbox-test-tool", shell.to_str().unwrap()),
+            Some(bin.join("agentbox-test-tool").display().to_string())
+        );
+    }
 }
