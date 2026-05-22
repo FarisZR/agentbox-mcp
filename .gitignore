@@ -1,1 +1,6 @@
 /target
+
+# Local/generated AgentBox MCP configs may contain bearer tokens or secret URLs.
+agentbox-mcp.chatgpt.toml
+agentbox-mcp.local.toml
+*.secret.toml
