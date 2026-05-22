@@ -205,9 +205,6 @@ fn tool_defs(config: &Config) -> Vec<Value> {
             "Run a shell command on the persistent machine with real access.",
             exec_input_schema(),
             Some(exec_output_schema()),
-            false,
-            true,
-            true,
         ),
         tool(
             prefix,
@@ -215,9 +212,6 @@ fn tool_defs(config: &Config) -> Vec<Value> {
             "Write input to, or poll output from, a real-access persistent machine session.",
             write_input_schema(),
             Some(exec_output_schema()),
-            false,
-            true,
-            true,
         ),
         tool(
             prefix,
@@ -228,9 +222,6 @@ fn tool_defs(config: &Config) -> Vec<Value> {
                 ("workdir", "string", false),
             ]),
             Some(apply_patch_output_schema()),
-            false,
-            true,
-            true,
         ),
         tool(
             prefix,
@@ -238,9 +229,6 @@ fn tool_defs(config: &Config) -> Vec<Value> {
             "Return information about the persistent machine with real access.",
             obj_schema(vec![]),
             Some(bootstrap_output_schema()),
-            true,
-            false,
-            false,
         ),
     ];
 
@@ -256,9 +244,6 @@ fn tool_defs(config: &Config) -> Vec<Value> {
                     ("max_results", "number", false),
                 ]),
                 Some(list_skills_output_schema()),
-                true,
-                false,
-                false,
             ),
             tool(
                 prefix,
@@ -266,9 +251,6 @@ fn tool_defs(config: &Config) -> Vec<Value> {
                 "Load skill instructions from the persistent machine.",
                 obj_schema(vec![("skill", "string", true)]),
                 Some(load_skill_output_schema()),
-                true,
-                false,
-                false,
             ),
         ]);
     }
@@ -276,26 +258,17 @@ fn tool_defs(config: &Config) -> Vec<Value> {
     tools
 }
 
-#[allow(clippy::too_many_arguments)]
 fn tool(
     prefix: &str,
     name: &str,
     description: &str,
     input_schema: Value,
     output_schema: Option<Value>,
-    read_only: bool,
-    open_world: bool,
-    destructive: bool,
 ) -> Value {
     let mut value = json!({
         "name": format!("{prefix}{name}"),
         "description": description,
-        "inputSchema": input_schema,
-        "annotations": {
-            "readOnlyHint": read_only,
-            "openWorldHint": open_world,
-            "destructiveHint": destructive
-        }
+        "inputSchema": input_schema
     });
     if let Some(schema) = output_schema {
         value["outputSchema"] = schema;
