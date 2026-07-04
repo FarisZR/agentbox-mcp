@@ -18,7 +18,55 @@ Connector URL:
 https://<tailscale-funnel-hostname>/mcp
 ```
 
+## Fake OAuth Setup
+
+Use this mode when ChatGPT only exposes OAuth for custom MCP connectors. It does not add a real identity provider. It runs a small OAuth authorization-code facade, issues short-lived single-use codes, validates the ChatGPT redirect URI and PKCE verifier, then returns the configured static bearer token as the OAuth access token. MCP requests are still protected by `Authorization: Bearer <token>`.
+
+Generate a config containing a long random bearer token behind fake OAuth:
+
+```bash
+./scripts/create-chatgpt-fake-oauth-config.sh agentbox-mcp.chatgpt.toml https://<tailscale-funnel-hostname>
+cargo run -- --config agentbox-mcp.chatgpt.toml
+```
+
+Expose it:
+
+```bash
+./scripts/setup-tailscale-funnel.sh
+```
+
+The generator prints the connector URL and OAuth endpoint values. In ChatGPT on the web:
+
+1. Open `Settings`.
+2. Go to `Connectors`.
+3. Open `Advanced` and enable `Developer mode`.
+4. Add/import a remote MCP connector.
+5. Name it `Agentbox Execution Environment`.
+6. Use `https://<tailscale-funnel-hostname>/mcp` as the connector URL.
+7. Choose OAuth authentication.
+8. Use `User-Defined OAuth Client`.
+9. Set OAuth Client ID to `chatgpt-agentbox`.
+10. Leave OAuth Client Secret empty.
+11. Set Token endpoint auth method to `none`.
+12. Set Auth URL to `https://<tailscale-funnel-hostname>/oauth/authorize`.
+13. Set Token URL to `https://<tailscale-funnel-hostname>/oauth/token`.
+14. Set Authorization server base and Resource to `https://<tailscale-funnel-hostname>`.
+15. Leave OIDC disabled.
+16. Set Default scopes to `agentbox:exec`; Base scopes may be empty or `agentbox:exec`.
+17. Save/link the connector, refresh tools, and confirm the `agentbox_*` tools appear.
+
+Security notes:
+
+- Fake OAuth is a compatibility shim for personal ChatGPT connectors, not real per-user OAuth.
+- The returned OAuth access token is the same static bearer credential used by MCP.
+- Keep `agentbox-mcp.chatgpt.toml` private.
+- The authorization endpoint only accepts ChatGPT redirect URIs.
+- Keep the server bound to `127.0.0.1` and expose only through HTTPS Funnel.
+- Rotate by generating a new config and restarting the server.
+
 ## Simple Bearer Token Setup
+
+Use this mode when ChatGPT exposes API key / bearer token authentication for the connector.
 
 Generate a config containing a long random bearer token:
 

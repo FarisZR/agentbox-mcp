@@ -90,6 +90,7 @@ impl AuthLayer {
         match self.config.mode {
             AuthMode::None => Ok(()),
             AuthMode::StaticBearer => self.check_static(headers),
+            AuthMode::FakeOAuth => self.check_static(headers),
             AuthMode::OAuthJwks => self.check_oauth(headers),
         }
     }
@@ -116,7 +117,7 @@ impl AuthLayer {
         }
     }
 
-    fn static_bearer_token(&self) -> Result<String, AuthError> {
+    pub fn static_bearer_token(&self) -> Result<String, AuthError> {
         match env::var(&self.config.static_bearer.token_env) {
             Ok(token) if !token.is_empty() => Ok(token),
             _ => self
