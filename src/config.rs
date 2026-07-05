@@ -67,7 +67,9 @@ pub enum AuthMode {
     None,
     #[default]
     StaticBearer,
+    #[serde(rename = "fake_oauth")]
     FakeOAuth,
+    #[serde(rename = "oauth_jwks")]
     OAuthJwks,
 }
 
@@ -255,4 +257,30 @@ pub fn expand_tilde(path: &str) -> String {
         return format!("{home}/{rest}");
     }
     path.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_documented_auth_mode_names() {
+        let config: Config = toml::from_str(
+            r#"
+            [auth]
+            mode = "fake_oauth"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(config.auth.mode, AuthMode::FakeOAuth);
+
+        let config: Config = toml::from_str(
+            r#"
+            [auth]
+            mode = "oauth_jwks"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(config.auth.mode, AuthMode::OAuthJwks);
+    }
 }
