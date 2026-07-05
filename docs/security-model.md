@@ -6,7 +6,7 @@ Security controls are placed at the MCP HTTP entrance:
 
 - `none`: localhost-only development, or ChatGPT web with a high-entropy secret in `server.mcp_path`. The server logs a warning if used with a non-loopback bind.
 - `static_bearer`: requires `Authorization: Bearer <token>`. The token can come from `agentbox_MCP_TOKEN` or `[auth.static_bearer].token`.
-- `fake_oauth`: exposes a minimal OAuth authorization-code facade for ChatGPT, then returns the configured static bearer token as the OAuth access token. MCP requests are still checked like `static_bearer`.
+- `fake_oauth`: exposes a minimal OAuth authorization-code facade for ChatGPT. The token endpoint requires the configured OAuth client gate before returning the static bearer token as the OAuth access token. MCP requests are still checked like `static_bearer`.
 - `oauth_jwks`: validates JWT signature using JWKS, issuer, audience, expiry/nbf, and required scopes.
 
 ## Recommended ChatGPT Security
@@ -33,7 +33,7 @@ audience = "https://<tailscale-funnel-hostname>"
 required_scopes = ["agentbox:exec"]
 ```
 
-Fake OAuth is a compatibility shim. It does not authenticate different users. It protects the OAuth handoff with ChatGPT redirect URI validation, short-lived single-use authorization codes, and PKCE validation, but the final credential remains one bearer token.
+Fake OAuth is a compatibility shim. It does not authenticate different users. It protects the OAuth handoff with ChatGPT redirect URI validation, short-lived single-use authorization codes, PKCE validation, and a required OAuth client gate at the token endpoint. The final credential remains one bearer token.
 
 Use API key / bearer token authentication in ChatGPT with `auth.mode = "static_bearer"` when that option is available:
 

@@ -32,6 +32,13 @@ mode = "fake_oauth"
 token = "REPLACE_WITH_64_HEX_BEARER_TOKEN"
 token_env = "agentbox_MCP_TOKEN"
 
+[auth.fake_oauth]
+client_id = "chatgpt-agentbox"
+client_credential = "REPLACE_WITH_64_HEX_OAUTH_CLIENT_CREDENTIAL"
+client_credential_env = "agentbox_FAKE_OAUTH_CLIENT_CREDENTIAL"
+allowed_redirect_uri_prefixes = ["https://chatgpt.com/connector/oauth/"]
+allowed_redirect_uris = ["https://chatgpt.com/connector_platform_oauth_redirect"]
+
 [auth.oauth]
 resource = "https://your-tailnet-or-funnel-hostname"
 issuer = "https://your-tailnet-or-funnel-hostname"

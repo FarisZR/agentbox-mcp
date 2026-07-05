@@ -35,7 +35,7 @@ cargo test --all
 
 ## Authentication
 
-`mode = "fake_oauth"` exposes a minimal OAuth authorization-code facade for ChatGPT. Linking redirects immediately back to ChatGPT with a short-lived single-use code, the token endpoint returns the configured static bearer token as the OAuth access token, and MCP requests are checked with the same static bearer logic.
+`mode = "fake_oauth"` exposes a minimal OAuth authorization-code facade for ChatGPT. Linking redirects immediately back to ChatGPT with a short-lived single-use code, the token endpoint requires a configured OAuth client gate, then returns the configured static bearer token as the OAuth access token, and MCP requests are checked with the same static bearer logic.
 
 For ChatGPT consumer accounts that do not expose raw API-key connector auth, generate a fake OAuth config:
 
@@ -44,7 +44,7 @@ For ChatGPT consumer accounts that do not expose raw API-key connector auth, gen
 cargo run -- --config agentbox-mcp.chatgpt.toml
 ```
 
-Then add `https://<tailscale-hostname>/mcp` in ChatGPT, choose OAuth, use a user-defined OAuth client, leave the client secret empty, set token endpoint auth to `none`, and use `https://<tailscale-hostname>/oauth/authorize` and `https://<tailscale-hostname>/oauth/token` for the OAuth endpoints.
+Then add `https://<tailscale-hostname>/mcp` in ChatGPT, choose OAuth, use a user-defined OAuth client, paste the generated OAuth client gate into the OAuth Client Secret field, set token endpoint auth to `client_secret_post` or `client_secret_basic`, and use `https://<tailscale-hostname>/oauth/authorize` and `https://<tailscale-hostname>/oauth/token` for the OAuth endpoints.
 
 `mode = "static_bearer"` requires `Authorization: Bearer <token>`. The token can come from `agentbox_MCP_TOKEN` or from `[auth.static_bearer].token` in the config.
 

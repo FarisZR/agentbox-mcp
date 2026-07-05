@@ -46,8 +46,8 @@ The generator prints the connector URL and OAuth endpoint values. In ChatGPT on 
 7. Choose OAuth authentication.
 8. Use `User-Defined OAuth Client`.
 9. Set OAuth Client ID to `chatgpt-agentbox`.
-10. Leave OAuth Client Secret empty.
-11. Set Token endpoint auth method to `none`.
+10. Set the OAuth Client Secret field to the generated OAuth client gate value.
+11. Set Token endpoint auth method to `client_secret_post` or `client_secret_basic`.
 12. Set Auth URL to `https://<tailscale-funnel-hostname>/oauth/authorize`.
 13. Set Token URL to `https://<tailscale-funnel-hostname>/oauth/token`.
 14. Set Authorization server base and Resource to `https://<tailscale-funnel-hostname>`.
@@ -57,8 +57,8 @@ The generator prints the connector URL and OAuth endpoint values. In ChatGPT on 
 
 Security notes:
 
-- Fake OAuth is a compatibility shim for personal ChatGPT connectors, not real per-user OAuth.
-- The returned OAuth access token is the same static bearer credential used by MCP.
+- Fake OAuth is a compatibility shim, not real per-user OAuth. It still requires a high-entropy OAuth client gate on the token endpoint for public deployments.
+- The returned OAuth access token is the same static bearer credential used by MCP, but it is only returned after the OAuth client gate is validated.
 - Keep `agentbox-mcp.chatgpt.toml` private.
 - The authorization endpoint only accepts ChatGPT redirect URIs.
 - Keep the server bound to `127.0.0.1` and expose only through HTTPS Funnel.
