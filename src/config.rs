@@ -58,6 +58,7 @@ pub struct AuthConfig {
     pub mode: AuthMode,
     pub static_bearer: StaticBearerConfig,
     pub oauth: OAuthConfig,
+    pub fake_oauth: FakeOAuthConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq, Default)]
@@ -66,6 +67,9 @@ pub enum AuthMode {
     None,
     #[default]
     StaticBearer,
+    #[serde(rename = "fake_oauth")]
+    FakeOAuth,
+    #[serde(rename = "oauth_jwks")]
     OAuthJwks,
 }
 
@@ -84,6 +88,16 @@ pub struct OAuthConfig {
     pub jwks_url: String,
     pub audience: String,
     pub required_scopes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct FakeOAuthConfig {
+    pub client_id: String,
+    pub client_credential_env: String,
+    pub client_credential: Option<String>,
+    pub allowed_redirect_uri_prefixes: Vec<String>,
+    pub allowed_redirect_uris: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -142,6 +156,7 @@ impl Default for AuthConfig {
             mode: AuthMode::StaticBearer,
             static_bearer: StaticBearerConfig::default(),
             oauth: OAuthConfig::default(),
+            fake_oauth: FakeOAuthConfig::default(),
         }
     }
 }
@@ -163,6 +178,20 @@ impl Default for OAuthConfig {
             jwks_url: "https://auth.example.com/.well-known/jwks.json".to_string(),
             audience: "https://agentbox.example.com".to_string(),
             required_scopes: vec!["agentbox:exec".to_string()],
+        }
+    }
+}
+
+impl Default for FakeOAuthConfig {
+    fn default() -> Self {
+        Self {
+            client_id: "chatgpt-agentbox".to_string(),
+            client_credential_env: "agentbox_FAKE_OAUTH_CLIENT_CREDENTIAL".to_string(),
+            client_credential: None,
+            allowed_redirect_uri_prefixes: vec!["https://chatgpt.com/connector/oauth/".to_string()],
+            allowed_redirect_uris: vec![
+                "https://chatgpt.com/connector_platform_oauth_redirect".to_string(),
+            ],
         }
     }
 }
@@ -228,4 +257,30 @@ pub fn expand_tilde(path: &str) -> String {
         return format!("{home}/{rest}");
     }
     path.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_documented_auth_mode_names() {
+        let config: Config = toml::from_str(
+            r#"
+            [auth]
+            mode = "fake_oauth"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(config.auth.mode, AuthMode::FakeOAuth);
+
+        let config: Config = toml::from_str(
+            r#"
+            [auth]
+            mode = "oauth_jwks"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(config.auth.mode, AuthMode::OAuthJwks);
+    }
 }

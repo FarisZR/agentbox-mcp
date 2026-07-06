@@ -42,6 +42,7 @@ async fn main() -> anyhow::Result<()> {
         auth,
         skills,
         bootstrap,
+        fake_oauth_codes: Arc::new(Default::default()),
     };
 
     let app = build_router(state).layer(TraceLayer::new_for_http());

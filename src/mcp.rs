@@ -1,20 +1,31 @@
-use std::sync::Arc;
+use std::{
+    collections::HashMap,
+    env,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
 
 use axum::{
-    Json, Router,
-    extract::State,
-    http::{HeaderMap, StatusCode},
-    response::IntoResponse,
+    Form, Json, Router,
+    extract::{Query, State},
+    http::{HeaderMap, StatusCode, header},
+    response::{IntoResponse, Redirect, Response},
     routing::{get, post},
+};
+use base64::{
+    Engine,
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
+use uuid::Uuid;
 
 use crate::{
     apply_patch::{self, ApplyPatchInput},
     auth::AuthLayer,
     bootstrap::Bootstrapper,
-    config::Config,
+    config::{AuthMode, Config},
     exec::{ExecCommandInput, ProcessManager, WriteStdinInput},
     skills::{ListSkillsInput, LoadSkillInput, SkillCatalog},
 };
@@ -26,6 +37,7 @@ pub struct AppState {
     pub auth: Arc<AuthLayer>,
     pub skills: Arc<SkillCatalog>,
     pub bootstrap: Arc<Bootstrapper>,
+    pub fake_oauth_codes: Arc<FakeOAuthCodes>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -55,11 +67,103 @@ struct JsonRpcError {
     data: Option<Value>,
 }
 
+#[derive(Default)]
+pub struct FakeOAuthCodes {
+    inner: Mutex<HashMap<String, FakeOAuthCode>>,
+}
+
+#[derive(Debug)]
+struct FakeOAuthCode {
+    redirect_uri: String,
+    expires_at: Instant,
+    code_challenge: String,
+    scope: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FakeOAuthAuthorizeQuery {
+    response_type: Option<String>,
+    client_id: Option<String>,
+    redirect_uri: Option<String>,
+    state: Option<String>,
+    code_challenge: Option<String>,
+    code_challenge_method: Option<String>,
+    scope: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FakeOAuthTokenForm {
+    grant_type: String,
+    client_id: Option<String>,
+    #[serde(rename = "client_secret")]
+    client_credential: Option<String>,
+    code: Option<String>,
+    redirect_uri: Option<String>,
+    code_verifier: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum FakeOAuthTokenError {
+    InvalidGrant,
+    InvalidRequest(&'static str),
+}
+
+impl FakeOAuthCodes {
+    const CODE_TTL: Duration = Duration::from_secs(300);
+
+    fn issue(&self, redirect_uri: String, code_challenge: String, scope: Option<String>) -> String {
+        let code = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+        let now = Instant::now();
+        let mut codes = self.inner.lock().expect("fake OAuth code store poisoned");
+        codes.retain(|_, existing| existing.expires_at > now);
+        codes.insert(
+            code.clone(),
+            FakeOAuthCode {
+                redirect_uri,
+                expires_at: now + Self::CODE_TTL,
+                code_challenge,
+                scope,
+            },
+        );
+        code
+    }
+
+    fn consume(
+        &self,
+        code: &str,
+        redirect_uri: &str,
+        code_verifier: Option<&str>,
+    ) -> Result<Option<String>, FakeOAuthTokenError> {
+        let now = Instant::now();
+        let mut codes = self.inner.lock().expect("fake OAuth code store poisoned");
+        codes.retain(|_, existing| existing.expires_at > now);
+        let Some(stored) = codes.remove(code) else {
+            return Err(FakeOAuthTokenError::InvalidGrant);
+        };
+        if redirect_uri != stored.redirect_uri {
+            return Err(FakeOAuthTokenError::InvalidGrant);
+        }
+        let Some(verifier) = code_verifier else {
+            return Err(FakeOAuthTokenError::InvalidRequest("missing code_verifier"));
+        };
+        if !verify_pkce_s256(verifier, &stored.code_challenge) {
+            return Err(FakeOAuthTokenError::InvalidGrant);
+        }
+        Ok(stored.scope)
+    }
+}
+
 pub fn build_router(state: AppState) -> Router {
     let mcp_path = state.config.server.mcp_path.clone();
     Router::new()
         .route("/healthz", get(healthz))
         .route("/.well-known/oauth-protected-resource", get(oauth_resource))
+        .route(
+            "/.well-known/oauth-authorization-server",
+            get(oauth_authorization_server),
+        )
+        .route("/oauth/authorize", get(oauth_authorize))
+        .route("/oauth/token", post(finish_login))
         .route(&mcp_path, post(mcp_post).get(mcp_get))
         .with_state(state)
 }
@@ -70,6 +174,251 @@ async fn healthz() -> impl IntoResponse {
 
 async fn oauth_resource(State(state): State<AppState>) -> impl IntoResponse {
     Json(state.auth.protected_resource_metadata())
+}
+
+async fn oauth_authorization_server(State(state): State<AppState>) -> Response {
+    if state.config.auth.mode != AuthMode::FakeOAuth {
+        return (StatusCode::NOT_FOUND, "fake OAuth mode is not enabled").into_response();
+    }
+    let issuer = state.config.auth.oauth.issuer.trim_end_matches('/');
+    Json(json!({
+        "issuer": issuer,
+        "authorization_endpoint": format!("{issuer}/oauth/authorize"),
+        "token_endpoint": format!("{issuer}/oauth/token"),
+        "response_types_supported": ["code"],
+        "grant_types_supported": ["authorization_code"],
+        "code_challenge_methods_supported": ["S256"],
+        "token_endpoint_auth_methods_supported": ["client_secret_post", "client_secret_basic"],
+        "scopes_supported": state.config.auth.oauth.required_scopes,
+    }))
+    .into_response()
+}
+
+async fn oauth_authorize(
+    State(state): State<AppState>,
+    Query(query): Query<FakeOAuthAuthorizeQuery>,
+) -> impl IntoResponse {
+    if state.config.auth.mode != AuthMode::FakeOAuth {
+        return (StatusCode::NOT_FOUND, "fake OAuth mode is not enabled").into_response();
+    }
+    if query.response_type.as_deref() != Some("code") {
+        return (StatusCode::BAD_REQUEST, "unsupported response_type").into_response();
+    }
+    if query.code_challenge_method.as_deref() != Some("S256") {
+        return (StatusCode::BAD_REQUEST, "unsupported code_challenge_method").into_response();
+    }
+    let Some(code_challenge) = query
+        .code_challenge
+        .filter(|challenge| !challenge.is_empty())
+    else {
+        return (StatusCode::BAD_REQUEST, "missing code_challenge").into_response();
+    };
+    if query.client_id.as_deref() != Some(&state.config.auth.fake_oauth.client_id) {
+        return (StatusCode::BAD_REQUEST, "invalid client_id").into_response();
+    }
+    let Some(redirect_uri) = query.redirect_uri else {
+        return (StatusCode::BAD_REQUEST, "missing redirect_uri").into_response();
+    };
+    if !is_allowed_chatgpt_redirect_uri(&state.config, &redirect_uri) {
+        return (StatusCode::BAD_REQUEST, "invalid redirect_uri").into_response();
+    }
+
+    let code = state
+        .fake_oauth_codes
+        .issue(redirect_uri.clone(), code_challenge, query.scope);
+    let mut target = redirect_uri;
+    append_query_param(&mut target, "code", &code);
+    if let Some(state_param) = query.state {
+        append_query_param(&mut target, "state", &state_param);
+    }
+    Redirect::to(&target).into_response()
+}
+
+async fn finish_login(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Form(form): Form<FakeOAuthTokenForm>,
+) -> impl IntoResponse {
+    if state.config.auth.mode != AuthMode::FakeOAuth {
+        return (StatusCode::NOT_FOUND, "fake OAuth mode is not enabled").into_response();
+    }
+    if let Err(response) = validate_fake_oauth_client(&headers, &form, &state.config) {
+        return *response;
+    }
+    if form.grant_type != "authorization_code" {
+        return oauth_error(StatusCode::BAD_REQUEST, "unsupported_grant_type", None);
+    }
+    let Some(code) = form.code.as_deref() else {
+        return oauth_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            Some("missing code"),
+        );
+    };
+    let Some(redirect_uri) = form.redirect_uri.as_deref() else {
+        return oauth_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            Some("missing redirect_uri"),
+        );
+    };
+    let scope =
+        match state
+            .fake_oauth_codes
+            .consume(code, redirect_uri, form.code_verifier.as_deref())
+        {
+            Ok(scope) => scope,
+            Err(FakeOAuthTokenError::InvalidGrant) => {
+                return oauth_error(StatusCode::BAD_REQUEST, "invalid_grant", None);
+            }
+            Err(FakeOAuthTokenError::InvalidRequest(description)) => {
+                return oauth_error(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_request",
+                    Some(description),
+                );
+            }
+        };
+    let access_token = match state.auth.static_bearer_token() {
+        Ok(token) => token,
+        Err(_) => return oauth_error(StatusCode::INTERNAL_SERVER_ERROR, "server_error", None),
+    };
+    Json(json!({
+        "access_token": access_token,
+        "token_type": "Bearer",
+        "expires_in": 31536000,
+        "scope": scope.unwrap_or_else(|| state.config.auth.oauth.required_scopes.join(" ")),
+    }))
+    .into_response()
+}
+
+fn oauth_error(
+    status: StatusCode,
+    error: &'static str,
+    description: Option<&'static str>,
+) -> axum::response::Response {
+    let mut body = json!({"error": error});
+    if let Some(description) = description {
+        body["error_description"] = Value::String(description.to_string());
+    }
+    (status, Json(body)).into_response()
+}
+
+fn validate_fake_oauth_client(
+    headers: &HeaderMap,
+    form: &FakeOAuthTokenForm,
+    config: &Config,
+) -> Result<(), Box<axum::response::Response>> {
+    let Some(expected_credential) = fake_oauth_client_credential(config) else {
+        return Err(Box::new(oauth_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "server_error",
+            Some("fake OAuth client secret is not configured"),
+        )));
+    };
+    let credentials = basic_client_credentials(headers).or_else(|| {
+        Some((
+            form.client_id.as_deref()?.to_string(),
+            form.client_credential.as_deref()?.to_string(),
+        ))
+    });
+    let Some((presented_client_id, presented_credential)) = credentials else {
+        return Err(Box::new(oauth_error(
+            StatusCode::UNAUTHORIZED,
+            "invalid_client",
+            Some("missing client authentication"),
+        )));
+    };
+    if !constant_time_eq(
+        presented_client_id.as_bytes(),
+        config.auth.fake_oauth.client_id.as_bytes(),
+    ) || !constant_time_eq(
+        presented_credential.as_bytes(),
+        expected_credential.as_bytes(),
+    ) {
+        return Err(Box::new(oauth_error(
+            StatusCode::UNAUTHORIZED,
+            "invalid_client",
+            Some("invalid client authentication"),
+        )));
+    };
+    Ok(())
+}
+
+fn fake_oauth_client_credential(config: &Config) -> Option<String> {
+    match env::var(&config.auth.fake_oauth.client_credential_env) {
+        Ok(secret) if !secret.is_empty() => Some(secret),
+        _ => config
+            .auth
+            .fake_oauth
+            .client_credential
+            .clone()
+            .filter(|secret| !secret.is_empty()),
+    }
+}
+
+fn basic_client_credentials(headers: &HeaderMap) -> Option<(String, String)> {
+    let value = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
+    let encoded = value.strip_prefix("Basic ")?;
+    let decoded = STANDARD.decode(encoded).ok()?;
+    let text = String::from_utf8(decoded).ok()?;
+    let (client_id, credential) = text.split_once(':')?;
+    Some((client_id.to_string(), credential.to_string()))
+}
+
+fn is_allowed_chatgpt_redirect_uri(config: &Config, uri: &str) -> bool {
+    config
+        .auth
+        .fake_oauth
+        .allowed_redirect_uri_prefixes
+        .iter()
+        .any(|prefix| uri.starts_with(prefix))
+        || config
+            .auth
+            .fake_oauth
+            .allowed_redirect_uris
+            .iter()
+            .any(|allowed| uri == allowed)
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    let max = a.len().max(b.len());
+    let mut diff = a.len() ^ b.len();
+    for i in 0..max {
+        let aa = a.get(i).copied().unwrap_or(0);
+        let bb = b.get(i).copied().unwrap_or(0);
+        diff |= (aa ^ bb) as usize;
+    }
+    diff == 0
+}
+
+fn verify_pkce_s256(verifier: &str, expected_challenge: &str) -> bool {
+    let digest = Sha256::digest(verifier.as_bytes());
+    let challenge = URL_SAFE_NO_PAD.encode(digest);
+    challenge == expected_challenge
+}
+
+fn append_query_param(url: &mut String, key: &str, value: &str) {
+    let separator = if url.contains('?') { '&' } else { '?' };
+    url.push(separator);
+    url.push_str(&percent_encode(key));
+    url.push('=');
+    url.push_str(&percent_encode(value));
+}
+
+fn percent_encode(value: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(byte as char);
+        } else {
+            encoded.push('%');
+            encoded.push(HEX[(byte >> 4) as usize] as char);
+            encoded.push(HEX[(byte & 0x0f) as usize] as char);
+        }
+    }
+    encoded
 }
 
 async fn mcp_get() -> impl IntoResponse {
@@ -500,5 +849,91 @@ mod tests {
         assert!(!names.contains(&"agentbox_list_skills".to_string()));
         assert!(!names.contains(&"agentbox_load_skill".to_string()));
         assert!(names.contains(&"agentbox_exec_command".to_string()));
+    }
+
+    #[test]
+    fn fake_oauth_codes_are_single_use_and_validate_redirect_and_pkce() {
+        let codes = FakeOAuthCodes::default();
+        let verifier = "correct horse battery staple";
+        let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+        let code = codes.issue(
+            "https://chatgpt.com/connector/oauth/callback".to_string(),
+            challenge,
+            Some("agentbox:exec".to_string()),
+        );
+
+        assert_eq!(
+            codes.consume(
+                &code,
+                "https://chatgpt.com/connector/oauth/callback",
+                Some(verifier),
+            ),
+            Ok(Some("agentbox:exec".to_string()))
+        );
+        assert_eq!(
+            codes.consume(
+                &code,
+                "https://chatgpt.com/connector/oauth/callback",
+                Some(verifier),
+            ),
+            Err(FakeOAuthTokenError::InvalidGrant)
+        );
+    }
+
+    #[test]
+    fn fake_oauth_codes_require_redirect_and_pkce_verifier() {
+        let codes = FakeOAuthCodes::default();
+        let verifier = "correct horse battery staple";
+        let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+
+        let missing_verifier_code = codes.issue(
+            "https://chatgpt.com/connector/oauth/callback".to_string(),
+            challenge.clone(),
+            None,
+        );
+        assert_eq!(
+            codes.consume(
+                &missing_verifier_code,
+                "https://chatgpt.com/connector/oauth/callback",
+                None,
+            ),
+            Err(FakeOAuthTokenError::InvalidRequest("missing code_verifier"))
+        );
+
+        let wrong_redirect_code = codes.issue(
+            "https://chatgpt.com/connector/oauth/callback".to_string(),
+            challenge,
+            None,
+        );
+        assert_eq!(
+            codes.consume(
+                &wrong_redirect_code,
+                "https://chatgpt.com/connector/oauth/other",
+                Some(verifier),
+            ),
+            Err(FakeOAuthTokenError::InvalidGrant)
+        );
+    }
+
+    #[test]
+    fn fake_oauth_redirects_are_restricted_to_chatgpt() {
+        assert!(is_allowed_chatgpt_redirect_uri(
+            &Config::default(),
+            "https://chatgpt.com/connector/oauth/VXRLIj9YMlc"
+        ));
+        assert!(!is_allowed_chatgpt_redirect_uri(
+            &Config::default(),
+            "https://evil.example/callback"
+        ));
+    }
+
+    #[test]
+    fn query_params_are_percent_encoded() {
+        let mut url = "https://chatgpt.com/connector/oauth/callback".to_string();
+        append_query_param(&mut url, "state", "a b&c");
+        assert_eq!(
+            url,
+            "https://chatgpt.com/connector/oauth/callback?state=a%20b%26c"
+        );
     }
 }

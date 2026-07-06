@@ -2,7 +2,7 @@
 
 `agentbox-mcp` is a Rust Streamable HTTP MCP server for a dedicated Linux agent machine. It exposes Codex-style execution tools to ChatGPT so the model can run commands, interact with long-lived TTY sessions, apply patches, inspect local skills, and bootstrap itself into the real machine context.
 
-The execution tools are intentionally unsandboxed after the MCP entrance check. Security belongs at the MCP entrance: use a strong static bearer token for the simple ChatGPT setup, or OAuth/JWKS if you later add an identity provider.
+The execution tools are intentionally unsandboxed after the MCP entrance check. Security belongs at the MCP entrance: use fake OAuth for ChatGPT accounts that only expose OAuth connector auth, use a strong static bearer token where API-key connector auth is available, or use OAuth/JWKS if you later add an identity provider.
 
 ## Build
 
@@ -35,6 +35,17 @@ cargo test --all
 
 ## Authentication
 
+`mode = "fake_oauth"` exposes a minimal OAuth authorization-code facade for ChatGPT. Linking redirects immediately back to ChatGPT with a short-lived single-use code, the token endpoint requires a configured OAuth client gate, then returns the configured static bearer token as the OAuth access token, and MCP requests are checked with the same static bearer logic.
+
+For ChatGPT consumer accounts that do not expose raw API-key connector auth, generate a fake OAuth config:
+
+```bash
+./scripts/create-chatgpt-fake-oauth-config.sh agentbox-mcp.chatgpt.toml https://<tailscale-hostname>
+cargo run -- --config agentbox-mcp.chatgpt.toml
+```
+
+Then add `https://<tailscale-hostname>/mcp` in ChatGPT, choose OAuth, use a user-defined OAuth client, paste the generated OAuth client gate into the OAuth Client Secret field, set token endpoint auth to `client_secret_post` or `client_secret_basic`, and use `https://<tailscale-hostname>/oauth/authorize` and `https://<tailscale-hostname>/oauth/token` for the OAuth endpoints.
+
 `mode = "static_bearer"` requires `Authorization: Bearer <token>`. The token can come from `agentbox_MCP_TOKEN` or from `[auth.static_bearer].token` in the config.
 
 For the simplest ChatGPT setup, generate a config with a hardcoded random bearer token:
@@ -64,7 +75,7 @@ The script checks Tailscale login state, verifies `/healthz`, prints the Funnel 
 tailscale funnel --bg --https=443 --yes 127.0.0.1:8787
 ```
 
-Use `https://<tailscale-hostname>/mcp` as the ChatGPT custom MCP connector URL and configure API key / bearer token authentication with your generated token. See [docs/tailscale-funnel.md](docs/tailscale-funnel.md).
+Use `https://<tailscale-hostname>/mcp` as the ChatGPT custom MCP connector URL and configure fake OAuth or API key / bearer token authentication depending on what your ChatGPT account exposes. See [docs/chatgpt-connector.md](docs/chatgpt-connector.md) and [docs/tailscale-funnel.md](docs/tailscale-funnel.md).
 
 ## Tool Reference
 
