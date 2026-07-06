@@ -26,6 +26,10 @@ mode = "fake_oauth"
 token = "<64-hex-random-token>"
 token_env = "agentbox_MCP_TOKEN"
 
+[auth.fake_oauth]
+client_credential = "<64-hex-random-client-gate>"
+client_credential_env = "agentbox_FAKE_OAUTH_CLIENT_CREDENTIAL"
+
 [auth.oauth]
 resource = "https://<tailscale-funnel-hostname>"
 issuer = "https://<tailscale-funnel-hostname>"

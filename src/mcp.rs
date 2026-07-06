@@ -9,7 +9,7 @@ use axum::{
     Form, Json, Router,
     extract::{Query, State},
     http::{HeaderMap, StatusCode, header},
-    response::{IntoResponse, Redirect},
+    response::{IntoResponse, Redirect, Response},
     routing::{get, post},
 };
 use base64::{
@@ -76,7 +76,7 @@ pub struct FakeOAuthCodes {
 struct FakeOAuthCode {
     redirect_uri: String,
     expires_at: Instant,
-    code_challenge: Option<String>,
+    code_challenge: String,
     scope: Option<String>,
 }
 
@@ -111,12 +111,7 @@ enum FakeOAuthTokenError {
 impl FakeOAuthCodes {
     const CODE_TTL: Duration = Duration::from_secs(300);
 
-    fn issue(
-        &self,
-        redirect_uri: String,
-        code_challenge: Option<String>,
-        scope: Option<String>,
-    ) -> String {
+    fn issue(&self, redirect_uri: String, code_challenge: String, scope: Option<String>) -> String {
         let code = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
         let now = Instant::now();
         let mut codes = self.inner.lock().expect("fake OAuth code store poisoned");
@@ -136,7 +131,7 @@ impl FakeOAuthCodes {
     fn consume(
         &self,
         code: &str,
-        redirect_uri: Option<&str>,
+        redirect_uri: &str,
         code_verifier: Option<&str>,
     ) -> Result<Option<String>, FakeOAuthTokenError> {
         let now = Instant::now();
@@ -145,18 +140,14 @@ impl FakeOAuthCodes {
         let Some(stored) = codes.remove(code) else {
             return Err(FakeOAuthTokenError::InvalidGrant);
         };
-        if let Some(redirect_uri) = redirect_uri
-            && redirect_uri != stored.redirect_uri
-        {
+        if redirect_uri != stored.redirect_uri {
             return Err(FakeOAuthTokenError::InvalidGrant);
         }
-        if let Some(expected_challenge) = stored.code_challenge.as_deref() {
-            let Some(verifier) = code_verifier else {
-                return Err(FakeOAuthTokenError::InvalidRequest("missing code_verifier"));
-            };
-            if !verify_pkce_s256(verifier, expected_challenge) {
-                return Err(FakeOAuthTokenError::InvalidGrant);
-            }
+        let Some(verifier) = code_verifier else {
+            return Err(FakeOAuthTokenError::InvalidRequest("missing code_verifier"));
+        };
+        if !verify_pkce_s256(verifier, &stored.code_challenge) {
+            return Err(FakeOAuthTokenError::InvalidGrant);
         }
         Ok(stored.scope)
     }
@@ -185,7 +176,10 @@ async fn oauth_resource(State(state): State<AppState>) -> impl IntoResponse {
     Json(state.auth.protected_resource_metadata())
 }
 
-async fn oauth_authorization_server(State(state): State<AppState>) -> impl IntoResponse {
+async fn oauth_authorization_server(State(state): State<AppState>) -> Response {
+    if state.config.auth.mode != AuthMode::FakeOAuth {
+        return (StatusCode::NOT_FOUND, "fake OAuth mode is not enabled").into_response();
+    }
     let issuer = state.config.auth.oauth.issuer.trim_end_matches('/');
     Json(json!({
         "issuer": issuer,
@@ -197,6 +191,7 @@ async fn oauth_authorization_server(State(state): State<AppState>) -> impl IntoR
         "token_endpoint_auth_methods_supported": ["client_secret_post", "client_secret_basic"],
         "scopes_supported": state.config.auth.oauth.required_scopes,
     }))
+    .into_response()
 }
 
 async fn oauth_authorize(
@@ -209,9 +204,15 @@ async fn oauth_authorize(
     if query.response_type.as_deref() != Some("code") {
         return (StatusCode::BAD_REQUEST, "unsupported response_type").into_response();
     }
-    if matches!(query.code_challenge_method.as_deref(), Some(method) if method != "S256") {
+    if query.code_challenge_method.as_deref() != Some("S256") {
         return (StatusCode::BAD_REQUEST, "unsupported code_challenge_method").into_response();
     }
+    let Some(code_challenge) = query
+        .code_challenge
+        .filter(|challenge| !challenge.is_empty())
+    else {
+        return (StatusCode::BAD_REQUEST, "missing code_challenge").into_response();
+    };
     if query.client_id.as_deref() != Some(&state.config.auth.fake_oauth.client_id) {
         return (StatusCode::BAD_REQUEST, "invalid client_id").into_response();
     }
@@ -222,10 +223,9 @@ async fn oauth_authorize(
         return (StatusCode::BAD_REQUEST, "invalid redirect_uri").into_response();
     }
 
-    let code =
-        state
-            .fake_oauth_codes
-            .issue(redirect_uri.clone(), query.code_challenge, query.scope);
+    let code = state
+        .fake_oauth_codes
+        .issue(redirect_uri.clone(), code_challenge, query.scope);
     let mut target = redirect_uri;
     append_query_param(&mut target, "code", &code);
     if let Some(state_param) = query.state {
@@ -255,23 +255,30 @@ async fn finish_login(
             Some("missing code"),
         );
     };
-    let scope = match state.fake_oauth_codes.consume(
-        code,
-        form.redirect_uri.as_deref(),
-        form.code_verifier.as_deref(),
-    ) {
-        Ok(scope) => scope,
-        Err(FakeOAuthTokenError::InvalidGrant) => {
-            return oauth_error(StatusCode::BAD_REQUEST, "invalid_grant", None);
-        }
-        Err(FakeOAuthTokenError::InvalidRequest(description)) => {
-            return oauth_error(
-                StatusCode::BAD_REQUEST,
-                "invalid_request",
-                Some(description),
-            );
-        }
+    let Some(redirect_uri) = form.redirect_uri.as_deref() else {
+        return oauth_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            Some("missing redirect_uri"),
+        );
     };
+    let scope =
+        match state
+            .fake_oauth_codes
+            .consume(code, redirect_uri, form.code_verifier.as_deref())
+        {
+            Ok(scope) => scope,
+            Err(FakeOAuthTokenError::InvalidGrant) => {
+                return oauth_error(StatusCode::BAD_REQUEST, "invalid_grant", None);
+            }
+            Err(FakeOAuthTokenError::InvalidRequest(description)) => {
+                return oauth_error(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_request",
+                    Some(description),
+                );
+            }
+        };
     let access_token = match state.auth.static_bearer_token() {
         Ok(token) => token,
         Err(_) => return oauth_error(StatusCode::INTERNAL_SERVER_ERROR, "server_error", None),
@@ -851,14 +858,14 @@ mod tests {
         let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
         let code = codes.issue(
             "https://chatgpt.com/connector/oauth/callback".to_string(),
-            Some(challenge),
+            challenge,
             Some("agentbox:exec".to_string()),
         );
 
         assert_eq!(
             codes.consume(
                 &code,
-                Some("https://chatgpt.com/connector/oauth/callback"),
+                "https://chatgpt.com/connector/oauth/callback",
                 Some(verifier),
             ),
             Ok(Some("agentbox:exec".to_string()))
@@ -866,7 +873,42 @@ mod tests {
         assert_eq!(
             codes.consume(
                 &code,
-                Some("https://chatgpt.com/connector/oauth/callback"),
+                "https://chatgpt.com/connector/oauth/callback",
+                Some(verifier),
+            ),
+            Err(FakeOAuthTokenError::InvalidGrant)
+        );
+    }
+
+    #[test]
+    fn fake_oauth_codes_require_redirect_and_pkce_verifier() {
+        let codes = FakeOAuthCodes::default();
+        let verifier = "correct horse battery staple";
+        let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+
+        let missing_verifier_code = codes.issue(
+            "https://chatgpt.com/connector/oauth/callback".to_string(),
+            challenge.clone(),
+            None,
+        );
+        assert_eq!(
+            codes.consume(
+                &missing_verifier_code,
+                "https://chatgpt.com/connector/oauth/callback",
+                None,
+            ),
+            Err(FakeOAuthTokenError::InvalidRequest("missing code_verifier"))
+        );
+
+        let wrong_redirect_code = codes.issue(
+            "https://chatgpt.com/connector/oauth/callback".to_string(),
+            challenge,
+            None,
+        );
+        assert_eq!(
+            codes.consume(
+                &wrong_redirect_code,
+                "https://chatgpt.com/connector/oauth/other",
                 Some(verifier),
             ),
             Err(FakeOAuthTokenError::InvalidGrant)
