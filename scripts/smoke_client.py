@@ -40,10 +40,24 @@ def structured(result):
 assert rpc("initialize")["protocolVersion"] == "2025-06-18"
 tools = rpc("tools/list")["tools"]
 names = {t["name"] for t in tools}
-for name in ["agentbox_exec_command", "agentbox_write_stdin", "agentbox_apply_patch", "agentbox_bootstrap", "agentbox_list_skills", "agentbox_load_skill"]:
+for name in [
+    "agentbox_exec_command",
+    "agentbox_write_stdin",
+    "agentbox_apply_patch",
+    "agentbox_bootstrap",
+    "agentbox_list_skills",
+    "agentbox_load_skill",
+    "agentbox_list_local_mcp_tools",
+    "agentbox_call_local_mcp_tool",
+]:
     assert name in names, name
 for t in tools:
-    assert t["annotations"] == {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False}
+    expected_annotations = (
+        {"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True}
+        if t["name"] == "agentbox_call_local_mcp_tool"
+        else {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False}
+    )
+    assert t["annotations"] == expected_annotations, t["name"]
     assert "outputSchema" in t, t["name"]
 
 bad = rpc("initialize", token="wrong", ok=False)

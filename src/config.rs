@@ -1,4 +1,4 @@
-use std::{env, fs, net::IpAddr, path::Path};
+use std::{collections::BTreeMap, env, fs, net::IpAddr, path::Path};
 
 use anyhow::Context;
 use clap::Parser;
@@ -15,6 +15,7 @@ pub struct Cli {
 pub struct Config {
     pub server: ServerConfig,
     pub tools: ToolsConfig,
+    pub mcp_proxy: McpProxyConfig,
     pub exec: ExecConfig,
     pub auth: AuthConfig,
     pub skills: SkillsConfig,
@@ -33,6 +34,27 @@ pub struct ServerConfig {
 #[serde(default)]
 pub struct ToolsConfig {
     pub prefix: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct McpProxyConfig {
+    pub enabled: bool,
+    pub discovery_timeout_ms: u64,
+    pub call_timeout_ms: u64,
+    pub servers: BTreeMap<String, McpProxyServerConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct McpProxyServerConfig {
+    pub enabled: bool,
+    pub alias: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub env: BTreeMap<String, String>,
+    pub inherit_env: bool,
+    pub expose_tools: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -127,6 +149,31 @@ impl Default for ToolsConfig {
     fn default() -> Self {
         Self {
             prefix: "agentbox_".to_string(),
+        }
+    }
+}
+
+impl Default for McpProxyConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            discovery_timeout_ms: 10_000,
+            call_timeout_ms: 120_000,
+            servers: BTreeMap::new(),
+        }
+    }
+}
+
+impl Default for McpProxyServerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            alias: String::new(),
+            command: String::new(),
+            args: Vec::new(),
+            env: BTreeMap::new(),
+            inherit_env: true,
+            expose_tools: true,
         }
     }
 }
@@ -282,5 +329,30 @@ mod tests {
         )
         .unwrap();
         assert_eq!(config.auth.mode, AuthMode::OAuthJwks);
+    }
+
+    #[test]
+    fn parses_local_mcp_proxy_server() {
+        let config: Config = toml::from_str(
+            r#"
+            [mcp_proxy.servers.computer]
+            alias = "computer"
+            command = "/usr/bin/computer-use-linux"
+            args = ["mcp"]
+            expose_tools = true
+
+            [mcp_proxy.servers.computer.env]
+            DISPLAY = ":0"
+            "#,
+        )
+        .unwrap();
+
+        let computer = config.mcp_proxy.servers.get("computer").unwrap();
+        assert_eq!(computer.alias, "computer");
+        assert_eq!(computer.command, "/usr/bin/computer-use-linux");
+        assert_eq!(computer.args, vec!["mcp"]);
+        assert_eq!(computer.env.get("DISPLAY").map(String::as_str), Some(":0"));
+        assert!(computer.enabled);
+        assert!(computer.expose_tools);
     }
 }

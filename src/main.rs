@@ -6,6 +6,7 @@ use agentbox_mcp::{
     config::{Cli, Config},
     exec::ProcessManager,
     mcp::{AppState, build_router},
+    mcp_proxy::McpProxyRegistry,
     skills::SkillCatalog,
 };
 use anyhow::Context;
@@ -36,12 +37,14 @@ async fn main() -> anyhow::Result<()> {
     let auth = Arc::new(AuthLayer::new(config.auth.clone()).await?);
     let skills = Arc::new(SkillCatalog::new(config.skills.clone()));
     let bootstrap = Arc::new(Bootstrapper::new(config.clone()));
+    let mcp_proxy = Arc::new(McpProxyRegistry::connect(&config.mcp_proxy).await);
     let state = AppState {
         config: config.clone(),
         manager,
         auth,
         skills,
         bootstrap,
+        mcp_proxy,
         fake_oauth_codes: Arc::new(Default::default()),
     };
 

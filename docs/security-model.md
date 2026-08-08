@@ -63,3 +63,16 @@ Recommended controls:
 - Do not publish logs/screenshots containing the token.
 - Rotate the token immediately if it leaks.
 - Prefer OAuth/JWKS if you later have a real IdP.
+
+
+## Local MCP servers
+
+Configured downstream MCPs are part of the trusted computing base. Agentbox spawns them as the same OS user and can forward authenticated caller requests to them. A downstream MCP may therefore have the same filesystem, network, device, and desktop authority as that account.
+
+Use explicit, preferably absolute command paths and configure only MCPs that the Agentbox client is intended to access. Keep secrets out of committed proxy environment tables. `expose_tools = false` hides a server's tools from the first-class list but does **not** make the server untrusted or harmless: the stable dispatcher can still call it.
+
+## Dedicated desktop control
+
+A dedicated computer-use device may intentionally grant the automation account persistent screenshot, accessibility, window-focus, and input-injection privileges. Those privileges belong behind the authenticated Agentbox entrance. In particular, keep `ydotoold` user-scoped, keep its socket under `/run/user/$UID`, and do not expose `/dev/uinput` or desktop-control services directly over the network.
+
+The production GNOME procedure, including the persistent XDG screenshot permission, is documented in [dedicated-gnome-computer-use.md](dedicated-gnome-computer-use.md). It is intended for a dedicated automation device, not a normal shared workstation.

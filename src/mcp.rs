@@ -27,6 +27,7 @@ use crate::{
     bootstrap::Bootstrapper,
     config::{AuthMode, Config},
     exec::{ExecCommandInput, ProcessManager, WriteStdinInput},
+    mcp_proxy::{McpProxyRegistry, dynamic_call_output_schema, list_tools_output_schema},
     skills::{ListSkillsInput, LoadSkillInput, SkillCatalog},
 };
 
@@ -37,7 +38,22 @@ pub struct AppState {
     pub auth: Arc<AuthLayer>,
     pub skills: Arc<SkillCatalog>,
     pub bootstrap: Arc<Bootstrapper>,
+    pub mcp_proxy: Arc<McpProxyRegistry>,
     pub fake_oauth_codes: Arc<FakeOAuthCodes>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ListLocalMcpToolsInput {
+    server: Option<String>,
+    tool: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CallLocalMcpToolInput {
+    server: String,
+    tool: String,
+    #[serde(default = "empty_json_object")]
+    arguments: Value,
 }
 
 #[derive(Debug, Deserialize)]
@@ -447,7 +463,7 @@ async fn mcp_post(
     tracing::info!(method = %req.method, "mcp request");
     let result = match req.method.as_str() {
         "initialize" => Ok(initialize_result()),
-        "tools/list" => Ok(json!({"tools": tool_defs(&state.config)})),
+        "tools/list" => Ok(json!({"tools": combined_tool_defs(&state)})),
         "tools/call" => call_tool(state, req.params).await,
         _ => Err(jsonrpc_err(
             -32601,
@@ -532,8 +548,43 @@ async fn call_tool(state: AppState, params: Value) -> Result<Value, JsonRpcError
                 json!({"content":[{"type":"text","text": out.content.clone()}], "structuredContent": out}),
             )
         }
+        "list_local_mcp_tools" => {
+            if !state.config.mcp_proxy.enabled {
+                return Err(jsonrpc_err(-32602, "local MCP proxy is disabled", None));
+            }
+            let input: ListLocalMcpToolsInput =
+                serde_json::from_value(args).map_err(invalid_params)?;
+            let out = state
+                .mcp_proxy
+                .list_tools(input.server.as_deref(), input.tool.as_deref());
+            Ok(json!({
+                "content":[{"type":"text","text": serde_json::to_string_pretty(&out).unwrap_or_default()}],
+                "structuredContent": out
+            }))
+        }
+        "call_local_mcp_tool" => {
+            if !state.config.mcp_proxy.enabled {
+                return Err(jsonrpc_err(-32602, "local MCP proxy is disabled", None));
+            }
+            let input: CallLocalMcpToolInput =
+                serde_json::from_value(args).map_err(invalid_params)?;
+            state
+                .mcp_proxy
+                .call_dynamic(&input.server, &input.tool, input.arguments)
+                .await
+                .map_err(tool_err)
+        }
+        _ if state.mcp_proxy.has_exposed_tool(name) => state
+            .mcp_proxy
+            .call_exposed(name, args)
+            .await
+            .map_err(tool_err),
         _ => Err(jsonrpc_err(-32602, format!("unknown tool {name}"), None)),
     }
+}
+
+fn empty_json_object() -> Value {
+    json!({})
 }
 
 fn initialize_result() -> Value {
@@ -604,6 +655,60 @@ fn tool_defs(config: &Config) -> Vec<Value> {
         ]);
     }
 
+    if config.mcp_proxy.enabled {
+        tools.push(tool(
+            prefix,
+            "list_local_mcp_tools",
+            "List local MCP tools on the persistent machine with real access.",
+            obj_schema(vec![("server", "string", false), ("tool", "string", false)]),
+            Some(list_tools_output_schema()),
+        ));
+
+        let mut dynamic_call = tool(
+            prefix,
+            "call_local_mcp_tool",
+            "Call a local MCP tool on the persistent machine with real access.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "server": {"type": "string"},
+                    "tool": {"type": "string"},
+                    "arguments": {"type": "object"}
+                },
+                "required": ["server", "tool"],
+                "additionalProperties": false
+            }),
+            Some(dynamic_call_output_schema()),
+        );
+        dynamic_call["annotations"] = json!({
+            "readOnlyHint": false,
+            "destructiveHint": true,
+            "openWorldHint": true
+        });
+        tools.push(dynamic_call);
+    }
+
+    tools
+}
+
+fn combined_tool_defs(state: &AppState) -> Vec<Value> {
+    let mut tools = tool_defs(&state.config);
+    let native_names = tools
+        .iter()
+        .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+        .map(str::to_string)
+        .collect::<std::collections::HashSet<_>>();
+
+    for tool in state.mcp_proxy.exposed_tool_defs() {
+        let Some(name) = tool.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        if native_names.contains(name) {
+            tracing::warn!(tool = %name, "skipping proxied MCP tool that collides with native tool");
+            continue;
+        }
+        tools.push(tool);
+    }
     tools
 }
 

@@ -87,9 +87,43 @@ Default names use the `agentbox_` prefix:
 - `agentbox_bootstrap`: return information about the persistent machine with real access.
 - `agentbox_list_skills`: compact skill catalog only.
 - `agentbox_load_skill`: full selected skill instructions.
+- `agentbox_list_local_mcp_tools`: list configured downstream MCP tools and their schemas.
+- `agentbox_call_local_mcp_tool`: call a downstream MCP tool through the stable dispatcher.
 
 Set `[tools].prefix = ""` to expose Codex-style names like `exec_command` and `write_stdin`.
 Set `[skills].enabled = false` to omit the skill tools when skills are provided outside MCP.
+
+## Proxy local MCP servers
+
+`agentbox-mcp` can connect to local stdio MCP servers at startup and re-export their tools through
+the same ChatGPT-facing MCP endpoint. Give each downstream server an `alias`; exported tool names
+are `<alias>_<upstream-tool-name>` so multiple MCP servers can safely have ordinary names such as
+`search` or `screenshot`.
+
+```toml
+[mcp_proxy]
+enabled = true
+
+[mcp_proxy.servers.computer]
+alias = "computer"
+command = "/home/agent/.local/bin/computer-use-linux"
+args = ["mcp"]
+expose_tools = true
+
+[mcp_proxy.servers.computer.env]
+DISPLAY = ":0"
+```
+
+For this example, downstream `screenshot` and `click` become `computer_screenshot` and
+`computer_click`. The downstream `inputSchema`, `outputSchema`, description, and annotations are
+preserved. Set `expose_tools = false` when a server should only be reachable through the stable
+dispatcher tools.
+
+Downstream discovery happens at Agentbox startup. Restart Agentbox after changing the local MCP
+configuration. ChatGPT may also require a connector metadata refresh before newly exported
+first-class tool names appear to the model.
+
+For the full configuration contract, lifecycle, verification steps, and desktop example, see [docs/local-mcp-proxy.md](docs/local-mcp-proxy.md). The exact dedicated GNOME computer-control setup used in production is documented in [docs/dedicated-gnome-computer-use.md](docs/dedicated-gnome-computer-use.md).
 
 ## Known Limitations
 

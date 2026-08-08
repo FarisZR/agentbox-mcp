@@ -4,5 +4,6 @@ pub mod bootstrap;
 pub mod config;
 pub mod exec;
 pub mod mcp;
+pub mod mcp_proxy;
 pub mod skills;
 pub mod truncation;

@@ -6,6 +6,24 @@ mcp_path = "/mcp"
 [tools]
 prefix = "agentbox_"
 
+[mcp_proxy]
+enabled = true
+discovery_timeout_ms = 10000
+call_timeout_ms = 120000
+
+# Optional local stdio MCP. The alias prefixes every first-class proxied tool:
+# "computer" + "screenshot" -> "computer_screenshot".
+[mcp_proxy.servers.computer]
+alias = "computer"
+command = "/home/agent/.local/bin/computer-use-linux"
+args = ["mcp"]
+inherit_env = true
+expose_tools = true
+
+# Add desktop-session variables here when the MCP needs GUI access.
+[mcp_proxy.servers.computer.env]
+DISPLAY = ":0"
+
 [exec]
 default_workdir = "/home/agent"
 default_shell = "/bin/bash"
