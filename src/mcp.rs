@@ -1,13 +1,14 @@
 use std::{
     collections::HashMap,
     env,
+    net::SocketAddr,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
 use axum::{
     Form, Json, Router,
-    extract::{Query, State},
+    extract::{ConnectInfo, Query, State},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
@@ -23,7 +24,7 @@ use uuid::Uuid;
 
 use crate::{
     apply_patch::{self, ApplyPatchInput},
-    auth::AuthLayer,
+    auth::{AuthError, AuthLayer, AuthThrottle, client_ip, constant_time_eq},
     bootstrap::Bootstrapper,
     config::{AuthMode, Config},
     exec::{ExecCommandInput, ProcessManager, WriteStdinInput},
@@ -36,6 +37,7 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub manager: Arc<ProcessManager>,
     pub auth: Arc<AuthLayer>,
+    pub throttle: Arc<AuthThrottle>,
     pub skills: Arc<SkillCatalog>,
     pub bootstrap: Arc<Bootstrapper>,
     pub mcp_proxy: Arc<McpProxyRegistry>,
@@ -252,15 +254,27 @@ async fn oauth_authorize(
 
 async fn finish_login(
     State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Form(form): Form<FakeOAuthTokenForm>,
 ) -> impl IntoResponse {
     if state.config.auth.mode != AuthMode::FakeOAuth {
         return (StatusCode::NOT_FOUND, "fake OAuth mode is not enabled").into_response();
     }
+    let ip = client_ip(&headers, peer.ip());
+    if let Err(remaining) = state.throttle.check(ip) {
+        tracing::warn!(client = %ip, remaining_secs = remaining.as_secs(), "token endpoint attempt rejected: banned");
+        return AuthError::banned(remaining).into_response();
+    }
     if let Err(response) = validate_fake_oauth_client(&headers, &form, &state.config) {
+        if let Some(ban) = state.throttle.record_failure(ip) {
+            tracing::warn!(client = %ip, ban_secs = ban.as_secs(), "repeated client-credential failures; banning client");
+        } else {
+            tracing::warn!(client = %ip, "oauth client authentication failed");
+        }
         return *response;
     }
+    state.throttle.record_success(ip);
     if form.grant_type != "authorization_code" {
         return oauth_error(StatusCode::BAD_REQUEST, "unsupported_grant_type", None);
     }
@@ -397,17 +411,6 @@ fn is_allowed_chatgpt_redirect_uri(config: &Config, uri: &str) -> bool {
             .any(|allowed| uri == allowed)
 }
 
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    let max = a.len().max(b.len());
-    let mut diff = a.len() ^ b.len();
-    for i in 0..max {
-        let aa = a.get(i).copied().unwrap_or(0);
-        let bb = b.get(i).copied().unwrap_or(0);
-        diff |= (aa ^ bb) as usize;
-    }
-    diff == 0
-}
-
 fn verify_pkce_s256(verifier: &str, expected_challenge: &str) -> bool {
     let digest = Sha256::digest(verifier.as_bytes());
     let challenge = URL_SAFE_NO_PAD.encode(digest);
@@ -446,11 +449,25 @@ async fn mcp_get() -> impl IntoResponse {
 
 async fn mcp_post(
     State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Json(req): Json<JsonRpcRequest>,
 ) -> impl IntoResponse {
-    if let Err(err) = state.auth.check(&headers) {
-        return err.into_response();
+    let ip = client_ip(&headers, peer.ip());
+    if let Err(remaining) = state.throttle.check(ip) {
+        tracing::warn!(client = %ip, remaining_secs = remaining.as_secs(), "auth attempt rejected: banned");
+        return AuthError::banned(remaining).into_response();
+    }
+    match state.auth.check(&headers) {
+        Ok(()) => state.throttle.record_success(ip),
+        Err(err) => {
+            if let Some(ban) = state.throttle.record_failure(ip) {
+                tracing::warn!(client = %ip, ban_secs = ban.as_secs(), "repeated auth failures; banning client");
+            } else {
+                tracing::warn!(client = %ip, "auth failed");
+            }
+            return err.into_response();
+        }
     }
     let id = req.id.clone().unwrap_or(Value::Null);
     if req.jsonrpc != "2.0" {

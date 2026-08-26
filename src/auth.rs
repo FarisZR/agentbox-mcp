@@ -1,14 +1,20 @@
-use std::{collections::HashSet, env};
+use std::{
+    collections::HashSet,
+    env,
+    net::IpAddr,
+    sync::Mutex,
+    time::{Duration, Instant},
+};
 
 use anyhow::Context;
 use axum::{
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use jsonwebtoken::{DecodingKey, Validation, decode, decode_header, jwk::JwkSet};
 use serde::Deserialize;
 use serde_json::json;
+use subtle::ConstantTimeEq;
 
 use crate::config::{AuthConfig, AuthMode};
 
@@ -56,6 +62,21 @@ impl IntoResponse for AuthError {
                 .insert(header::WWW_AUTHENTICATE, value);
         }
         response
+    }
+}
+
+impl AuthError {
+    /// 429 response used by the request handler when a client is banned
+    /// by [`AuthThrottle`] for repeated failures.
+    pub fn banned(remaining: Duration) -> AuthError {
+        AuthError {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            message: format!(
+                "too many failed auth attempts; retry in {} seconds",
+                remaining.as_secs().max(1)
+            ),
+            www_authenticate: None,
+        }
     }
 }
 
@@ -207,21 +228,107 @@ fn aud_contains(aud: &Audience, expected: &str) -> bool {
     }
 }
 
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    let max = a.len().max(b.len());
-    let mut diff = a.len() ^ b.len();
-    for i in 0..max {
-        let aa = a.get(i).copied().unwrap_or(0);
-        let bb = b.get(i).copied().unwrap_or(0);
-        diff |= (aa ^ bb) as usize;
-    }
-    diff == 0
+/// Constant-time byte comparison for token equality checks.
+pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    a.ct_eq(b).into()
 }
 
-pub fn unsigned_test_jwt_payload(token: &str) -> Option<serde_json::Value> {
-    let payload = token.split('.').nth(1)?;
-    let bytes = URL_SAFE_NO_PAD.decode(payload).ok()?;
-    serde_json::from_slice(&bytes).ok()
+/// The real client IP behind the Cloudflare tunnel, when present.
+///
+/// The server binds to loopback, so the only sources are local processes
+/// and cloudflared, which forwards the edge-set `CF-Connecting-IP` header.
+/// Cloudflare strips any client-supplied value of this header at the edge.
+pub fn client_ip(headers: &HeaderMap, peer: IpAddr) -> IpAddr {
+    headers
+        .get("cf-connecting-ip")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().parse().ok())
+        .unwrap_or(peer)
+}
+
+/// Tracks failed bearer authentications per client IP and applies an
+/// exponentially growing ban, so token spraying over the public URL is
+/// both throttled and visible in logs.
+pub struct AuthThrottle {
+    inner: Mutex<std::collections::HashMap<IpAddr, Offender>>,
+    /// Failures tolerated before the first ban.
+    threshold: u32,
+    /// Duration of the first ban; doubles on every further failure.
+    base_ban: Duration,
+    /// Upper bound for a ban.
+    max_ban: Duration,
+    /// Defensive cap on tracked IPs (memory-exhaustion guard).
+    max_entries: usize,
+}
+
+#[derive(Debug)]
+struct Offender {
+    failures: u32,
+    banned_until: Option<Instant>,
+}
+
+impl AuthThrottle {
+    pub fn new() -> Self {
+        Self {
+            inner: Mutex::new(std::collections::HashMap::new()),
+            threshold: 3,
+            base_ban: Duration::from_secs(2),
+            max_ban: Duration::from_secs(3600),
+            max_entries: 10_000,
+        }
+    }
+
+    /// Ok(()) when the IP may attempt authentication. Err(remaining) while banned.
+    pub fn check(&self, ip: IpAddr) -> Result<(), Duration> {
+        let now = Instant::now();
+        let offenders = self.inner.lock().expect("auth throttle poisoned");
+        if let Some(offender) = offenders.get(&ip)
+            && let Some(until) = offender.banned_until
+            && until > now
+        {
+            return Err(until - now);
+        }
+        Ok(())
+    }
+
+    /// Records a failed attempt and returns the ban just entered, if any.
+    pub fn record_failure(&self, ip: IpAddr) -> Option<Duration> {
+        let now = Instant::now();
+        let mut offenders = self.inner.lock().expect("auth throttle poisoned");
+        if offenders.len() >= self.max_entries && !offenders.contains_key(&ip) {
+            return None; // table full; fail open rather than blocking new faces
+        }
+        let offender = offenders.entry(ip).or_insert(Offender {
+            failures: 0,
+            banned_until: None,
+        });
+        offender.failures += 1;
+        if offender.failures < self.threshold {
+            return None;
+        }
+        let exponent = offender.failures - self.threshold;
+        let ban = self
+            .base_ban
+            .checked_mul(1_u32 << exponent)
+            .unwrap_or(self.max_ban)
+            .min(self.max_ban);
+        offender.banned_until = Some(now + ban);
+        Some(ban)
+    }
+
+    /// A successful authentication clears the IP's record entirely.
+    pub fn record_success(&self, ip: IpAddr) {
+        self.inner
+            .lock()
+            .expect("auth throttle poisoned")
+            .remove(&ip);
+    }
+}
+
+impl Default for AuthThrottle {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]
@@ -254,5 +361,49 @@ mod tests {
             "Bearer config-secret".parse().unwrap(),
         );
         assert!(auth.check(&headers).is_ok());
+    }
+
+    #[test]
+    fn throttle_bans_after_threshold_and_doubles() {
+        let throttle = AuthThrottle::new();
+        let ip: IpAddr = "203.0.113.7".parse().unwrap();
+        assert!(throttle.check(ip).is_ok());
+        assert_eq!(throttle.record_failure(ip), None); // failure 1
+        assert_eq!(throttle.record_failure(ip), None); // failure 2
+        assert_eq!(throttle.record_failure(ip), Some(Duration::from_secs(2))); // first ban
+        assert!(throttle.check(ip).is_err()); // banned right away
+        assert_eq!(throttle.record_failure(ip), Some(Duration::from_secs(4)));
+        assert_eq!(throttle.record_failure(ip), Some(Duration::from_secs(8)));
+        // capped at max_ban even after many failures
+        for _ in 0..20 {
+            throttle.record_failure(ip);
+        }
+        assert_eq!(throttle.record_failure(ip), Some(Duration::from_secs(3600)));
+    }
+
+    #[test]
+    fn throttle_success_resets_and_other_ips_unaffected() {
+        let throttle = AuthThrottle::new();
+        let bad: IpAddr = "203.0.113.7".parse().unwrap();
+        let other: IpAddr = "198.51.100.9".parse().unwrap();
+        for _ in 0..3 {
+            throttle.record_failure(bad);
+        }
+        assert!(throttle.check(bad).is_err());
+        assert!(throttle.check(other).is_ok());
+        throttle.record_success(bad);
+        assert!(throttle.check(bad).is_ok());
+    }
+
+    #[test]
+    fn client_ip_prefers_cf_header() {
+        let ip: IpAddr = "203.0.113.7".parse().unwrap();
+        let peer: IpAddr = "127.0.0.1".parse().unwrap();
+        let mut headers = HeaderMap::new();
+        assert_eq!(client_ip(&headers, peer), peer);
+        headers.insert("cf-connecting-ip", "203.0.113.7".parse().unwrap());
+        assert_eq!(client_ip(&headers, peer), ip);
+        headers.insert("cf-connecting-ip", "not-an-ip".parse().unwrap());
+        assert_eq!(client_ip(&headers, peer), peer);
     }
 }

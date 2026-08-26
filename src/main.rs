@@ -1,7 +1,7 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use agentbox_mcp::{
-    auth::AuthLayer,
+    auth::{AuthLayer, AuthThrottle},
     bootstrap::Bootstrapper,
     config::{Cli, Config},
     exec::ProcessManager,
@@ -35,6 +35,7 @@ async fn main() -> anyhow::Result<()> {
 
     let manager = Arc::new(ProcessManager::new(config.exec.clone()));
     let auth = Arc::new(AuthLayer::new(config.auth.clone()).await?);
+    let throttle = Arc::new(AuthThrottle::new());
     let skills = Arc::new(SkillCatalog::new(config.skills.clone()));
     let bootstrap = Arc::new(Bootstrapper::new(config.clone()));
     let mcp_proxy = Arc::new(McpProxyRegistry::connect(&config.mcp_proxy).await);
@@ -42,6 +43,7 @@ async fn main() -> anyhow::Result<()> {
         config: config.clone(),
         manager,
         auth,
+        throttle,
         skills,
         bootstrap,
         mcp_proxy,
@@ -51,7 +53,10 @@ async fn main() -> anyhow::Result<()> {
     let app = build_router(state).layer(TraceLayer::new_for_http());
     let listener = TcpListener::bind(bind).await?;
     tracing::info!(%bind, "agentbox-mcp listening");
-    serve(listener, app)
+    serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
         .with_graceful_shutdown(async {
             let _ = signal::ctrl_c().await;
         })
