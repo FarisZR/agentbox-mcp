@@ -13,6 +13,15 @@ cargo test --all
 
 The smoke client covers MCP initialize, tools/list, output schemas, agentbox permission-suppression annotations, bearer auth rejection/acceptance, fast commands, nonzero exits, stdout/stderr capture, paths with spaces, heredocs, Unicode, invalid UTF-8, long-running polling, TTY stdin, Ctrl-C, unknown sessions, non-TTY stdin rejection, concurrent sessions, output truncation, apply_patch, skill listing/loading, and bootstrap.
 
+The closed-loop check also runs `scripts/tls-regression.py` against the built
+binary. It tests the actual OAuth JWKS HTTPS client with synthetic local chains:
+a normal chain under a custom native trust root succeeds, compromised eMudhra
+keys fail even when reissued with a different certificate, and a hostname
+mismatch fails. Each server process gets an isolated test trust store. The
+offline `tests/tls_distrust.rs` tests separately exercise the verifier with a
+fixed verification time. Fixture provenance is documented in
+`tests/fixtures/tls/README.md`.
+
 
 ## Local MCP proxy verification
 

@@ -116,4 +116,5 @@ done
 curl -fsS "http://127.0.0.1:${PORT}/healthz" >/dev/null
 
 python3 "$ROOT/scripts/smoke_client.py" "http://127.0.0.1:${PORT}/mcp" "$TOKEN" "$TMP"
+python3 "$ROOT/scripts/tls-regression.py" "$ROOT/target/debug/agentbox-mcp"
 echo "closed-loop ok"

@@ -84,7 +84,17 @@ impl AuthLayer {
     pub async fn new(config: AuthConfig) -> anyhow::Result<Self> {
         let jwks = if config.mode == AuthMode::OAuthJwks {
             Some(
-                reqwest::get(&config.oauth.jwks_url)
+                // Codex dependencies also enable reqwest's native TLS backend.
+                // Explicitly select the patched verifier, while retaining native
+                // trust anchors (including administrator-installed private CAs).
+                reqwest::Client::builder()
+                    .use_rustls_tls()
+                    .tls_built_in_webpki_certs(false)
+                    .tls_built_in_native_certs(true)
+                    .build()
+                    .context("build jwks client")?
+                    .get(&config.oauth.jwks_url)
+                    .send()
                     .await
                     .context("fetch jwks")?
                     .json::<JwkSet>()
