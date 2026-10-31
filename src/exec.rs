@@ -189,6 +189,8 @@ impl ProcessManager {
         ))
     }
 
+    // Existing hotspot; keep new functions under the global complexity threshold.
+    #[allow(clippy::cognitive_complexity)]
     async fn exec_tty(&self, input: ExecCommandInput) -> Result<OutputShape, ExecError> {
         let start = Instant::now();
         let login = input.login.unwrap_or(self.config.login_default);

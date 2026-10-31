@@ -45,6 +45,8 @@ pub struct McpProxyRegistry {
 }
 
 impl McpProxyRegistry {
+    // Existing hotspot; keep new functions under the global complexity threshold.
+    #[allow(clippy::cognitive_complexity)]
     pub async fn connect(config: &McpProxyConfig) -> Self {
         let call_timeout = Duration::from_millis(config.call_timeout_ms.max(1));
         let mut registry = Self {

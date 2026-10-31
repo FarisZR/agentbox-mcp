@@ -252,6 +252,8 @@ async fn oauth_authorize(
     Redirect::to(&target).into_response()
 }
 
+// Existing hotspot; keep new functions under the global complexity threshold.
+#[allow(clippy::cognitive_complexity)]
 async fn finish_login(
     State(state): State<AppState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
@@ -447,6 +449,8 @@ async fn mcp_get() -> impl IntoResponse {
     )
 }
 
+// Existing hotspot; keep new functions under the global complexity threshold.
+#[allow(clippy::cognitive_complexity)]
 async fn mcp_post(
     State(state): State<AppState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
